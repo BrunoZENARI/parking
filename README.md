@@ -19,86 +19,70 @@ Gestion du stock de places par catégorie pour le système de parking.
 
 ## Prérequis
 
-- [Docker Desktop](https://www.docker.com/products/docker-desktop/) installé et lancé
-- [Git](https://git-scm.com/) (optionnel, pour cloner)
-- Python 3.12+ (uniquement si tu veux lancer sans Docker)
+- Python 3.12+
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) (optionnel)
+- [Git](https://git-scm.com/)
 
 ---
 
 ## Installation
 
-### 1. Cloner ou dézipper le projet
+### 1. Cloner le dépôt
 
 ```bash
-# Si tu as Git
-git clone <url-du-repo>
-cd parking
-
-# Sinon, dézippé le fichier parking.zip et ouvre un terminal dans le dossier
+git clone https://github.com/BrunoZENARI/parking
 cd parking
 ```
 
-### 2. Vérifier le fichier .env
+### 2. Créer et activer le virtual environment
 
-Le fichier `.env` est déjà présent avec les valeurs par défaut :
+```bash
+python -m venv .venv
 
-```env
-RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
-DATABASE_URL=sqlite://db/parking.db
-HOLD_TIMEOUT_SECONDS=30
+# Windows
+.venv\Scripts\activate
+
+# Mac / Linux
+source .venv/bin/activate
 ```
 
-Tu peux modifier `HOLD_TIMEOUT_SECONDS` pour ajuster le délai du hold temporaire.
+### 3. Installer les dépendances
+
+```bash
+pip install -r requirements.txt
+```
+
+### 4. Créer le dossier de base de données
+
+```bash
+mkdir db
+```
 
 ---
 
 ## Lancement
 
-### Avec Docker (recommandé)
+### En local
 
 ```bash
-# Construire et démarrer les conteneurs
-docker compose up --build
-
-# En arrière-plan
-docker compose up --build -d
-
-# Voir les logs
-docker compose logs -f parking
-
-# Arrêter
-docker compose down
+uvicorn infrastructure.api.main:app --host 0.0.0.0 --port 8001 --reload
 ```
 
 Le service démarre sur **http://localhost:8001**
 
-RabbitMQ démarre sur :
-- **http://localhost:15672** — interface web (login : guest / guest)
-- **port 5672** — port AMQP utilisé par les services
+La base de données SQLite est créée automatiquement dans `db/parking.db` au premier démarrage.
+Les 5 catégories sont initialisées en base si elles n'existent pas encore.
 
-### Sans Docker (développement local)
+### Avec Docker
 
 ```bash
-# Créer un environnement virtuel
-python -m venv venv
-
-# Activer l'environnement virtuel
-# Sur Mac/Linux :
-source venv/bin/activate
-# Sur Windows :
-venv\Scripts\activate
-
-# Installer les dépendances
-pip install -r requirements.txt
-
-# Créer le dossier de la base de données
-mkdir -p db
-
-# Lancer le service
-uvicorn infrastructure.api.main:app --host 0.0.0.0 --port 8001 --reload
+docker compose up --build
 ```
 
-> ⚠️ Sans Docker, RabbitMQ ne sera pas disponible. Le service démarrera quand même mais le consumer RabbitMQ sera inactif.
+### Sur Render
+
+Le service est déployé automatiquement à chaque `git push` sur la branche principale.
+Le port est fourni dynamiquement par Render via la variable `$PORT`.
 
 ---
 
@@ -108,21 +92,21 @@ uvicorn infrastructure.api.main:app --host 0.0.0.0 --port 8001 --reload
 parking/
 ├── domain/                          # Cœur métier pur — aucune dépendance externe
 │   ├── entities/
-│   │   ├── category.py              # Entité Category + règles métier
+│   │   ├── category.py              # Entité Category + règles métier + mutex
 │   │   └── temporary_hold.py        # Entité TemporaryHold + cycle de vie
 │   └── ports/
 │       ├── category_repository.py   # Interface (port) pour Category
-│       └── temporary_hold_repository.py  # Interface (port) pour TemporaryHold
+│       └── temporary_hold_repository.py
 │
-├── application/                     # Cas d'usage — orchestre le domain
+├── application/                     # Cas d'usage
 │   └── use_cases/
-│       ├── check_availability.py    # Vérifier disponibilité d'une catégorie
-│       ├── create_hold.py           # Créer un hold temporaire
-│       ├── confirm_entry.py         # Confirmer l'entrée d'un véhicule
-│       ├── confirm_exit.py          # Confirmer la sortie d'un véhicule
-│       └── update_repartition.py    # Modifier répartition walkin/booking
+│       ├── check_availability.py
+│       ├── create_hold.py
+│       ├── confirm_entry.py
+│       ├── confirm_exit.py
+│       └── update_repartition.py
 │
-├── infrastructure/                  # Adapters — implémentations concrètes
+├── infrastructure/                  # Adapters
 │   ├── api/
 │   │   ├── main.py                  # Application FastAPI + démarrage
 │   │   └── routes/
@@ -136,197 +120,156 @@ parking/
 │           ├── category_repository_impl.py      # Implémentation SQLite
 │           └── temporary_hold_repository_impl.py
 │
-├── db/                              # Fichier SQLite (créé automatiquement)
-├── .env                             # Variables d'environnement
-├── requirements.txt                 # Dépendances Python
-├── Dockerfile                       # Image Docker du service
-└── docker-compose.yml               # Orchestration Docker
+├── db/                              # Base de données SQLite (créée automatiquement)
+├── .gitignore
+├── .env                             # Variables d'environnement (ne pas commiter)
+├── requirements.txt
+├── Dockerfile
+└── docker-compose.yml
 ```
 
 ---
 
 ## API REST
 
-La documentation interactive Swagger est disponible sur :
+Documentation interactive Swagger : **http://localhost:8001/docs**
 
-**http://localhost:8001/docs**
+### Capacité du parking
+
+| Catégorie | Total | Walk-in | Booking |
+|---|---|---|---|
+| STANDARD | 80 | 70 | 10 |
+| XL | 12 | 12 | 0 |
+| ELECTRIC | 12 | 12 | 0 |
+| HANDICAPPED | 6 | 6 | 0 |
+| TWO_WHEELS | 10 | 10 | 0 |
+| **Total** | **120** | **110** | **10** |
 
 ### Endpoints
 
 #### `GET /health`
-Vérifie que le service est opérationnel.
-
-**Réponse :**
 ```json
-{
-  "status": "ok",
-  "service": "parking"
-}
+{"status": "ok", "service": "parking"}
 ```
 
----
-
 #### `GET /parking/availability/{category_name}/{commercial_type}`
-Vérifie la disponibilité d'une catégorie pour un mode de commercialisation.
+Vérifie la disponibilité d'une catégorie.
 
-**Paramètres :**
-| Paramètre | Type | Valeurs possibles |
-|---|---|---|
-| `category_name` | string | `STANDARD`, `XL`, `HANDICAPPED`, `ELECTRIC`, `TWO_WHEELS` |
-| `commercial_type` | string | `walkin`, `booking` |
+Valeurs `category_name` : `STANDARD`, `XL`, `ELECTRIC`, `HANDICAPPED`, `TWO_WHEELS`
+Valeurs `commercial_type` : `walkin`, `booking`
 
-**Exemple :**
 ```bash
 curl http://localhost:8001/parking/availability/STANDARD/walkin
 ```
-
-**Réponse 200 :**
 ```json
 {
   "category_name": "STANDARD",
   "commercial_type": "walkin",
   "is_available": true,
-  "spot_available": 5
+  "spot_available": 70
 }
 ```
-
-**Réponse 404 :** Catégorie introuvable.
-
----
 
 #### `POST /parking/hold`
-Crée un hold temporaire sur une place (bloque le stock virtuel).
+Crée un hold temporaire (bloque le stock virtuel).
 
-**Corps de la requête :**
 ```json
-{
-  "category_name": "STANDARD",
-  "commercial_type": "walkin"
-}
+{"category_name": "STANDARD", "commercial_type": "walkin"}
 ```
-
-**Exemple :**
-```bash
-curl -X POST http://localhost:8001/parking/hold \
-  -H "Content-Type: application/json" \
-  -d '{"category_name": "STANDARD", "commercial_type": "walkin"}'
-```
-
-**Réponse 201 :**
 ```json
 {
   "hold_id": 1,
   "category_name": "STANDARD",
   "commercial_type": "walkin",
-  "end_at": "2025-01-01T12:00:30"
+  "end_at": "2025-01-01T12:00:30",
+  "success": true
 }
 ```
 
-**Réponse 409 :** Aucune place disponible.
+#### `POST /parking/confirm_entry`
+Confirme l'entrée physique du véhicule (décrémente le stock réel).
+
+```json
+{"category_name": "STANDARD", "commercial_type": "walkin"}
+```
+
+#### `POST /parking/free`
+Libère une place suite à une sortie.
+
+```json
+{"category_name": "STANDARD", "commercial_type": "walkin"}
+```
+
+#### `GET /parking/occupation/{category_name}`
+Taux d'occupation d'une catégorie.
+
+```json
+{
+  "category_name": "STANDARD",
+  "occupation_rate": 0.25,
+  "spot_taken": 20,
+  "total_capacity": 80
+}
+```
+
+#### `GET /parking/occupation`
+Taux d'occupation de toutes les catégories.
 
 ---
 
 ## Événements RabbitMQ
 
-Le service écoute la queue **`parking.events`**.
+> ⚠️ Formats à valider avec les autres micro-services (Access, Booking).
 
-> ⚠️ **À coordonner avec les autres services** — ces formats sont à valider avec Access et Booking.
+Queue écoutée : **`parking.events`**
 
-### Événements consommés
-
-#### `vehicle.entry.confirmed`
-Publié par **Access** quand un véhicule a physiquement franchi la barrière.
-
+### `vehicle.entry.confirmed` (depuis Access)
 ```json
-{
-  "event_type": "vehicle.entry.confirmed",
-  "hold_id": 1
-}
+{"event_type": "vehicle.entry.confirmed", "category_name": "STANDARD", "commercial_type": "walkin"}
 ```
 
-➡️ Confirme le hold, décrémente le stock réel.
-
----
-
-#### `vehicle.exit.confirmed`
-Publié par **Access** quand un véhicule est sorti.
-
+### `vehicle.exit.confirmed` (depuis Access)
 ```json
-{
-  "event_type": "vehicle.exit.confirmed",
-  "category_name": "STANDARD",
-  "commercial_type": "walkin"
-}
+{"event_type": "vehicle.exit.confirmed", "category_name": "STANDARD", "commercial_type": "walkin"}
 ```
 
-➡️ Libère la place, incrémente stock réel et virtuel.
-
----
-
-#### `parking.repartition.update`
-Publié par un **administrateur** (via Access ou une interface admin) pour modifier la répartition.
-
+### `booking.spot.reserved` (depuis Booking)
 ```json
-{
-  "event_type": "parking.repartition.update",
-  "category_name": "STANDARD",
-  "new_walkin_capacity": 8,
-  "new_booking_capacity": 2
-}
+{"event_type": "booking.spot.reserved", "category_name": "STANDARD"}
 ```
 
-➡️ Recalcule la répartition en respectant les contraintes métier.
-
----
-
-#### `booking.spot.reserved`
-Publié par **Booking** quand une réservation est confirmée.
-
+### `parking.repartition.update` (admin)
 ```json
-{
-  "event_type": "booking.spot.reserved",
-  "category_name": "STANDARD"
-}
+{"event_type": "parking.repartition.update", "category_name": "STANDARD", "new_walkin_capacity": 60, "new_booking_capacity": 20}
 ```
-
-➡️ Décrémente le stock booking disponible.
 
 ---
 
 ## Variables d'environnement
 
-| Variable | Valeur par défaut | Description |
+| Variable | Défaut | Description |
 |---|---|---|
-| `RABBITMQ_URL` | `amqp://guest:guest@rabbitmq:5672/` | URL de connexion RabbitMQ |
-| `DATABASE_URL` | `sqlite://db/parking.db` | Chemin de la base SQLite |
-| `HOLD_TIMEOUT_SECONDS` | `30` | Durée du hold temporaire en secondes |
+| `DATABASE_URL` | `sqlite://db/parking.db` | Chemin SQLite |
+| `RABBITMQ_URL` | `amqp://guest:guest@rabbitmq:5672/` | URL RabbitMQ |
+| `HOLD_TIMEOUT_SECONDS` | `30` | Durée du hold en secondes |
+| `PORT` | `8001` | Port (fourni automatiquement par Render) |
 
 ---
 
 ## Règles métier
 
-### Invariants de la Category
-- `walkin_capacity + booking_capacity = total_capacity` — toujours vrai
-- `spot_available_walkin <= walkin_capacity` — toujours vrai
-- `spot_available_booking <= booking_capacity` — toujours vrai
+### Invariant principal
+```
+walkin_capacity + booking_capacity = total_capacity
+```
 
 ### Stock réel vs stock virtuel
-- **Stock virtuel** (`spot_available_*`) : décrémenté à la création d'un hold
-- **Stock réel** (`spot_taken_*`) : décrémenté à la confirmation d'entrée
-- La disponibilité est toujours calculée sur le stock virtuel
+| Action | Stock virtuel | Stock réel |
+|---|---|---|
+| Demande de hold | -1 | inchangé |
+| Confirmation entrée | inchangé | -1 |
+| Expiration hold | +1 | inchangé |
+| Sortie | +1 | +1 |
 
-### Modification de répartition
-La nouvelle capacité demandée doit satisfaire :
-```
-new_walkin_capacity >= spot_taken_walkin + holds_actifs_walkin
-new_booking_capacity >= spot_taken_booking + holds_actifs_booking
-```
-
-### Catégories disponibles
-| Nom | Description |
-|---|---|
-| `STANDARD` | Place voiture standard |
-| `XL` | Place grande taille |
-| `HANDICAPPED` | Place handicapé |
-| `ELECTRIC` | Place avec borne de recharge |
-| `TWO_WHEELS` | Place 2 roues |
+### Mutex
+Chaque catégorie possède son propre `asyncio.Lock()` — les opérations concurrentes sur une même catégorie sont sérialisées pour éviter les race conditions.
