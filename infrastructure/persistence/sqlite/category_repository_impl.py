@@ -50,3 +50,7 @@ class SQLiteCategoryRepository:
             spot_taken_booking=model.spot_taken_booking,
             spot_available_booking=model.spot_available_booking,
         )
+
+    async def get_id_by_name(self, name: str) -> int:
+        model = await CategoryModel.get(name=name)
+        return model.id

@@ -125,7 +125,7 @@ async def create_hold(request: HoldRequest):
     now = datetime.utcnow()
     hold = TemporaryHold(
         id=0,
-        category_id=request.category_name.upper(),
+        category_id=await category_repo.get_id_by_name(request.category_name.upper()),
         commercial_type=request.commercial_type,
         status=HoldStatus.ACTIVE,
         created_at=now,
