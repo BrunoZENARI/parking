@@ -1,18 +1,29 @@
+import os
+from datetime import datetime, timedelta
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from domain.entities.category import Category, CommercialType
+from domain.entities.temporary_hold import HoldStatus, TemporaryHold
+from infrastructure.persistence.sqlite.category_repository_impl import SQLiteCategoryRepository
+from infrastructure.persistence.sqlite.temporary_hold_repository_impl import SQLiteTemporaryHoldRepository
 
 router = APIRouter(prefix="/parking", tags=["Parking"])
 
-# Instanciation des catégories en mémoire — source de vérité du service
-categories: dict[str, Category] = {
+HOLD_TIMEOUT_SECONDS = int(os.getenv("HOLD_TIMEOUT_SECONDS", 30))
+
+# Catégories par défaut — créées en base au démarrage si absentes
+DEFAULT_CATEGORIES: dict[str, Category] = {
     "STANDARD":    Category(name="STANDARD",    total_capacity=80, walkin_capacity=70, booking_capacity=10),
-    "XL":          Category(name="XL",          total_capacity=12, walkin_capacity=12, booking_capacity=0),
-    "ELECTRIC":    Category(name="ELECTRIC",    total_capacity=12, walkin_capacity=12, booking_capacity=0),
     "HANDICAPPED": Category(name="HANDICAPPED", total_capacity=6,  walkin_capacity=6,  booking_capacity=0),
+    "ELECTRIC":    Category(name="ELECTRIC",    total_capacity=12, walkin_capacity=12, booking_capacity=0),
+    "XL":          Category(name="XL",          total_capacity=12, walkin_capacity=12, booking_capacity=0),
     "TWO_WHEELS":  Category(name="TWO_WHEELS",  total_capacity=10, walkin_capacity=10, booking_capacity=0),
 }
+
+category_repo = SQLiteCategoryRepository()
+hold_repo = SQLiteTemporaryHoldRepository()
 
 
 # --- Schémas Pydantic ---
@@ -30,12 +41,14 @@ class HoldRequest(BaseModel):
 
 
 class HoldResponse(BaseModel):
+    hold_id: int
     category_name: str
     commercial_type: str
+    end_at: str
     success: bool
 
 
-class FreeRequest(BaseModel):
+class EntryExitRequest(BaseModel):
     category_name: str
     commercial_type: CommercialType
 
@@ -51,18 +64,31 @@ class AllCategoriesResponse(BaseModel):
     categories: list[OccupationResponse]
 
 
+# --- Helpers ---
+
+async def _cleanup_expired_holds(category: Category, category_name: str):
+    expired = await hold_repo.get_expired_active()
+    for hold in expired:
+        hold.status = HoldStatus.EXPIRED
+        category.release_hold(hold.commercial_type)
+        await hold_repo.save(hold)
+    if expired:
+        await category_repo.save(category)
+
+
 # --- Routes ---
 
 @router.get(
     "/availability/{category_name}/{commercial_type}",
     response_model=AvailabilityResponse,
     summary="Vérifier la disponibilité d'une catégorie",
-    description="Retourne la disponibilité pour un type de place et un mode de commercialisation.",
 )
 async def check_availability(category_name: str, commercial_type: CommercialType):
-    category = categories.get(category_name.upper())
+    category = await category_repo.get_by_name(category_name.upper())
     if not category:
         raise HTTPException(status_code=404, detail=f"Catégorie {category_name} introuvable")
+
+    await _cleanup_expired_holds(category, category_name.upper())
 
     if commercial_type == CommercialType.WALKIN:
         spot_available = category.spot_available_walkin
@@ -70,7 +96,7 @@ async def check_availability(category_name: str, commercial_type: CommercialType
         spot_available = category.spot_available_booking
 
     return AvailabilityResponse(
-        category_name=category_name,
+        category_name=category_name.upper(),
         commercial_type=commercial_type,
         is_available=category.is_available(commercial_type),
         spot_available=spot_available,
@@ -82,68 +108,83 @@ async def check_availability(category_name: str, commercial_type: CommercialType
     response_model=HoldResponse,
     status_code=201,
     summary="Créer un hold temporaire sur une place",
-    description="Bloque temporairement une place (stock virtuel) en attente de confirmation d'entrée.",
 )
 async def create_hold(request: HoldRequest):
-    category = categories.get(request.category_name.upper())
+    category = await category_repo.get_by_name(request.category_name.upper())
     if not category:
         raise HTTPException(status_code=404, detail=f"Catégorie {request.category_name} introuvable")
+
+    await _cleanup_expired_holds(category, request.category_name.upper())
 
     success = await category.take(request.commercial_type)
     if not success:
-        raise HTTPException(status_code=409, detail="Aucune place disponible dans cette catégorie")
+        raise HTTPException(status_code=409, detail="Aucune place disponible")
+
+    await category_repo.save(category)
+
+    now = datetime.utcnow()
+    hold = TemporaryHold(
+        id=0,
+        category_id=request.category_name.upper(),
+        commercial_type=request.commercial_type,
+        status=HoldStatus.ACTIVE,
+        created_at=now,
+        end_at=now + timedelta(seconds=HOLD_TIMEOUT_SECONDS),
+    )
+    saved_hold = await hold_repo.save(hold)
 
     return HoldResponse(
-        category_name=request.category_name,
+        hold_id=saved_hold.id,
+        category_name=request.category_name.upper(),
         commercial_type=request.commercial_type,
+        end_at=saved_hold.end_at.isoformat(),
         success=True,
     )
-
-
-@router.post(
-    "/free",
-    status_code=200,
-    summary="Libérer une place",
-    description="Libère une place suite à la sortie d'un véhicule. Incrémente stock réel et virtuel.",
-)
-async def free_spot(request: FreeRequest):
-    category = categories.get(request.category_name.upper())
-    if not category:
-        raise HTTPException(status_code=404, detail=f"Catégorie {request.category_name} introuvable")
-
-    await category.free(request.commercial_type)
-    return {"message": "Place libérée avec succès"}
 
 
 @router.post(
     "/confirm_entry",
     status_code=200,
     summary="Confirmer l'entrée d'un véhicule",
-    description="Confirme l'entrée physique — décrémente le stock réel.",
 )
-async def confirm_entry(request: FreeRequest):
-    category = categories.get(request.category_name.upper())
+async def confirm_entry(request: EntryExitRequest):
+    category = await category_repo.get_by_name(request.category_name.upper())
     if not category:
         raise HTTPException(status_code=404, detail=f"Catégorie {request.category_name} introuvable")
 
     await category.confirm_entry(request.commercial_type)
+    await category_repo.save(category)
     return {"message": "Entrée confirmée"}
+
+
+@router.post(
+    "/free",
+    status_code=200,
+    summary="Libérer une place suite à une sortie",
+)
+async def free_spot(request: EntryExitRequest):
+    category = await category_repo.get_by_name(request.category_name.upper())
+    if not category:
+        raise HTTPException(status_code=404, detail=f"Catégorie {request.category_name} introuvable")
+
+    await category.free(request.commercial_type)
+    await category_repo.save(category)
+    return {"message": "Place libérée avec succès"}
 
 
 @router.get(
     "/occupation/{category_name}",
     response_model=OccupationResponse,
     summary="Taux d'occupation d'une catégorie",
-    description="Retourne le taux d'occupation en pourcentage pour une catégorie.",
 )
 async def get_occupation(category_name: str):
-    category = categories.get(category_name.upper())
+    category = await category_repo.get_by_name(category_name.upper())
     if not category:
         raise HTTPException(status_code=404, detail=f"Catégorie {category_name} introuvable")
 
     total_taken = category.spot_taken_walkin + category.spot_taken_booking
     return OccupationResponse(
-        category_name=category_name,
+        category_name=category_name.upper(),
         occupation_rate=category.occupation_rate(),
         spot_taken=total_taken,
         total_capacity=category.total_capacity,
@@ -156,13 +197,14 @@ async def get_occupation(category_name: str):
     summary="Taux d'occupation de toutes les catégories",
 )
 async def get_all_occupation():
-    result = []
-    for name, category in categories.items():
-        total_taken = category.spot_taken_walkin + category.spot_taken_booking
-        result.append(OccupationResponse(
-            category_name=name,
-            occupation_rate=category.occupation_rate(),
-            spot_taken=total_taken,
-            total_capacity=category.total_capacity,
-        ))
+    categories = await category_repo.get_all()
+    result = [
+        OccupationResponse(
+            category_name=c.name,
+            occupation_rate=c.occupation_rate(),
+            spot_taken=c.spot_taken_walkin + c.spot_taken_booking,
+            total_capacity=c.total_capacity,
+        )
+        for c in categories
+    ]
     return AllCategoriesResponse(categories=result)

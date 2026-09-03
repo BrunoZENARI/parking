@@ -1,3 +1,5 @@
 fastapi>=0.111.0
 uvicorn>=0.29.0
 pydantic>=2.7.1
+tortoise-orm>=0.21.3
+aiosqlite>=0.20.0

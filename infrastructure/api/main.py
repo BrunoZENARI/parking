@@ -1,11 +1,16 @@
 import logging
+import os
 
 from fastapi import FastAPI
+from tortoise.contrib.fastapi import register_tortoise
 
+from infrastructure.api.routes.parking_routes import DEFAULT_CATEGORIES, category_repo
 from infrastructure.api.routes.parking_routes import router as parking_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite://db/parking.db")
 
 app = FastAPI(
     title="Micro-service Parking",
@@ -20,6 +25,14 @@ app = FastAPI(
 
 app.include_router(parking_router)
 
+register_tortoise(
+    app,
+    db_url=DATABASE_URL,
+    modules={"models": ["infrastructure.persistence.sqlite.models"]},
+    generate_schemas=True,
+    add_exception_handlers=True,
+)
+
 
 @app.get("/health", tags=["Health"])
 async def health():
@@ -29,6 +42,8 @@ async def health():
 @app.on_event("startup")
 async def startup():
     logger.info("Démarrage du micro-service Parking")
+    await category_repo.get_or_create_all(DEFAULT_CATEGORIES)
+    logger.info("Catégories initialisées en base")
 
 
 @app.on_event("shutdown")
