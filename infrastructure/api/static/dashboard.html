@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Parking — Dashboard</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: 'Segoe UI', sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; padding: 2rem; }
+        h1 { text-align: center; font-size: 1.8rem; margin-bottom: 0.5rem; color: #38bdf8; }
+        .subtitle { text-align: center; color: #94a3b8; margin-bottom: 2rem; font-size: 0.9rem; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.5rem; }
+        .card { background: #1e293b; border-radius: 12px; padding: 1.5rem; border: 1px solid #334155; }
+        .card h2 { font-size: 1rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 1rem; }
+        .stats { display: flex; justify-content: space-between; margin-bottom: 0.75rem; font-size: 0.9rem; }
+        .rate { font-size: 2rem; font-weight: bold; margin-bottom: 0.75rem; }
+        .bar-bg { background: #334155; border-radius: 999px; height: 10px; overflow: hidden; }
+        .bar { height: 100%; border-radius: 999px; transition: width 0.5s ease; }
+        .green { color: #4ade80; } .orange { color: #fb923c; } .red { color: #f87171; }
+        .bar.green { background: #4ade80; } .bar.orange { background: #fb923c; } .bar.red { background: #f87171; }
+        .refresh { text-align: center; margin-top: 2rem; color: #475569; font-size: 0.8rem; }
+    </style>
+</head>
+<body>
+    <h1>🅿️ Parking Dashboard</h1>
+    <p class="subtitle" id="last-update">Chargement...</p>
+    <div class="grid" id="grid"></div>
+    <p class="refresh">Actualisation automatique toutes les 10 secondes</p>
+
+    <script>
+        const API_KEY = 'parking-secret-2025';
+
+        async function load() {
+            try {
+                const res = await fetch('/parking/occupation', {
+                    headers: { 'X-API-Key': API_KEY }
+                });
+                const data = await res.json();
+                const grid = document.getElementById('grid');
+                grid.innerHTML = '';
+
+                data.categories.forEach(cat => {
+                    const pct = Math.round(cat.occupation_rate * 100);
+                    const cls = pct < 50 ? 'green' : pct < 80 ? 'orange' : 'red';
+                    const dispo = cat.total_capacity - cat.spot_taken;
+                    grid.innerHTML += `
+                        <div class="card">
+                            <h2>${cat.category_name}</h2>
+                            <div class="rate ${cls}">${pct}%</div>
+                            <div class="stats">
+                                <span>🚗 Occupées : <b>${cat.spot_taken}</b></span>
+                                <span>✅ Libres : <b>${dispo}</b></span>
+                                <span>📦 Total : <b>${cat.total_capacity}</b></span>
+                            </div>
+                            <div class="bar-bg"><div class="bar ${cls}" style="width:${pct}%"></div></div>
+                        </div>`;
+                });
+
+                document.getElementById('last-update').textContent =
+                    'Dernière mise à jour : ' + new Date().toLocaleTimeString('fr-FR');
+            } catch(e) {
+                document.getElementById('last-update').textContent = 'Erreur de chargement';
+            }
+        }
+
+        load();
+        setInterval(load, 10000);
+    </script>
+</body>
+</html>

@@ -1,8 +1,11 @@
 import logging
 import os
 
+
 from fastapi import FastAPI
 from tortoise.contrib.fastapi import register_tortoise
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 
 from infrastructure.api.routes.parking_routes import DEFAULT_CATEGORIES, category_repo
 from infrastructure.api.routes.parking_routes import router as parking_router
@@ -24,6 +27,7 @@ app = FastAPI(
 )
 
 app.include_router(parking_router)
+app.mount("/static", StaticFiles(directory="infrastructure/api/static"), name="static")
 
 register_tortoise(
     app,
@@ -49,3 +53,10 @@ async def startup():
 @app.on_event("shutdown")
 async def shutdown():
     logger.info("Arrêt du micro-service Parking")
+
+
+app.mount("/static", StaticFiles(directory="infrastructure/api/static"), name="static")
+
+@app.get("/dashboard", tags=["UI"])
+async def dashboard():
+    return FileResponse("infrastructure/api/static/dashboard.html")
