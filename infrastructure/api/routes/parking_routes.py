@@ -1,7 +1,8 @@
 import os
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+from infrastructure.api.security import verify_api_key
 from pydantic import BaseModel
 
 from domain.entities.category import Category, CommercialType
@@ -9,7 +10,7 @@ from domain.entities.temporary_hold import HoldStatus, TemporaryHold
 from infrastructure.persistence.sqlite.category_repository_impl import SQLiteCategoryRepository
 from infrastructure.persistence.sqlite.temporary_hold_repository_impl import SQLiteTemporaryHoldRepository
 
-router = APIRouter(prefix="/parking", tags=["Parking"])
+router = APIRouter(prefix="/parking", tags=["Parking"], dependencies=[Depends(verify_api_key)])
 
 HOLD_TIMEOUT_SECONDS = int(os.getenv("HOLD_TIMEOUT_SECONDS", 30))
 
