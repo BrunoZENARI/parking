@@ -45,7 +45,7 @@
                     const dispo = cat.total_capacity - cat.spot_taken;
                     grid.innerHTML += `
                         <div class="card">
-                            <h2>${cat.category_name}</h2>
+                            <h2>${cat.label}</h2>
                             <div class="rate ${cls}">${pct}%</div>
                             <div class="stats">
                                 <span>🚗 Occupées : <b>${cat.spot_taken}</b></span>

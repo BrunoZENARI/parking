@@ -23,6 +23,19 @@ DEFAULT_CATEGORIES: dict[str, Category] = {
     "TWO_WHEELS":  Category(name="TWO_WHEELS",  total_capacity=10, walkin_capacity=10, booking_capacity=0),
 }
 
+CATEGORY_LABELS = {
+    "STANDARD":    "Standard",
+    "HANDICAPPED": "PMR",
+    "ELECTRIC":    "Électrique",
+    "XL":          "XL",
+    "TWO_WHEELS":  "Deux-roues",
+}
+
+
+def get_label(name: str) -> str:
+    return CATEGORY_LABELS.get(name.upper(), name.title())
+
+
 category_repo = SQLiteCategoryRepository()
 hold_repo = SQLiteTemporaryHoldRepository()
 
@@ -31,6 +44,7 @@ hold_repo = SQLiteTemporaryHoldRepository()
 
 class AvailabilityResponse(BaseModel):
     category_name: str
+    label: str
     commercial_type: str
     is_available: bool
     spot_available: int
@@ -44,6 +58,7 @@ class HoldRequest(BaseModel):
 class HoldResponse(BaseModel):
     hold_id: int
     category_name: str
+    label: str
     commercial_type: str
     end_at: str
     success: bool
@@ -56,6 +71,7 @@ class EntryExitRequest(BaseModel):
 
 class OccupationResponse(BaseModel):
     category_name: str
+    label: str
     occupation_rate: float
     spot_taken: int
     total_capacity: int
@@ -98,6 +114,7 @@ async def check_availability(category_name: str, commercial_type: CommercialType
 
     return AvailabilityResponse(
         category_name=category_name.upper(),
+        label=get_label(category_name),
         commercial_type=commercial_type,
         is_available=category.is_available(commercial_type),
         spot_available=spot_available,
@@ -137,6 +154,7 @@ async def create_hold(request: HoldRequest):
     return HoldResponse(
         hold_id=saved_hold.id,
         category_name=request.category_name.upper(),
+        label=get_label(request.category_name),
         commercial_type=request.commercial_type,
         end_at=saved_hold.end_at.isoformat(),
         success=True,
@@ -186,6 +204,7 @@ async def get_occupation(category_name: str):
     total_taken = category.spot_taken_walkin + category.spot_taken_booking
     return OccupationResponse(
         category_name=category_name.upper(),
+        label=get_label(category_name),
         occupation_rate=category.occupation_rate(),
         spot_taken=total_taken,
         total_capacity=category.total_capacity,
@@ -202,6 +221,7 @@ async def get_all_occupation():
     result = [
         OccupationResponse(
             category_name=c.name,
+            label=get_label(c.name),
             occupation_rate=c.occupation_rate(),
             spot_taken=c.spot_taken_walkin + c.spot_taken_booking,
             total_capacity=c.total_capacity,
