@@ -19,7 +19,7 @@ DEFAULT_CATEGORIES: dict[str, Category] = {
     "STANDARD":    Category(name="STANDARD",    total_capacity=80, walkin_capacity=70, booking_capacity=10),
     "HANDICAPPED": Category(name="HANDICAPPED", total_capacity=6,  walkin_capacity=6,  booking_capacity=0),
     "ELECTRIC":    Category(name="ELECTRIC",    total_capacity=12, walkin_capacity=12, booking_capacity=0),
-    "XL":          Category(name="XL",          total_capacity=12, walkin_capacity=12, booking_capacity=0),
+    "XL":          Category(name="XL",          total_capacity=12, walkin_capacity=10, booking_capacity=2),
     "TWO_WHEELS":  Category(name="TWO_WHEELS",  total_capacity=10, walkin_capacity=10, booking_capacity=0),
 }
 
