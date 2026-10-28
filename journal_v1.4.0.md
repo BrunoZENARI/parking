@@ -33,11 +33,13 @@ Entité centrale : `Category` — un compteur par type de place.
 | Catégorie | Total | Walk-in | Booking |
 |---|---|---|---|
 | STANDARD | 80 | 70 | 10 |
-| XL | 12 | 12 | 0 |
+| XL | 12 | 10 | 2 |
 | ELECTRIC | 12 | 12 | 0 |
-| HANDICAPPED | 6 | 6 | 0 |
+| HANDICAPPED (affiché « PMR ») | 6 | 6 | 0 |
 | TWO_WHEELS | 10 | 10 | 0 |
-| **Total** | **120** | **110** | **10** |
+| **Total** | **120** | **108** | **12** |
+
+> Mise à jour du 28 octobre 2026 : XL passe de 12/0 à 10/2 pour permettre au service Réservation de réserver des places XL (voir section 18).
 
 **Attributs de `Category` :**
 - `name` — nom de la catégorie
@@ -160,7 +162,7 @@ class Category:
 - **Langage** : Python 3.12
 - **Framework** : FastAPI + Uvicorn
 - **ORM** : Tortoise ORM (async natif)
-- **Base de données** : PostgreSQL (Render) / SQLite (local)
+- **Base de données** : PostgreSQL (Supabase, depuis octobre) / SQLite (local)
 - **Driver PostgreSQL** : asyncpg
 - **Messagerie** : RabbitMQ via aio-pika (à intégrer)
 - **Documentation** : Swagger auto-généré par FastAPI (`/docs`)
@@ -260,8 +262,85 @@ POST /parking/free → {"category_name": "STANDARD", "commercial_type": "walkin"
 
 ---
 
-## 12. Points en suspens
+## 12. Points en suspens (état au 3 septembre — voir section 21 pour l'état actuel)
 
 - Intégration RabbitMQ (consumer) — à faire après coordination avec Access et Booking
 - Format des messages RabbitMQ à valider avec le groupe
 - Endpoint admin pour modification de répartition walk-in / booking
+
+---
+
+## Octobre 2026 — Qualité, CI/CD, hébergement
+
+## 13. Tests unitaires (Qualité)
+
+- 14 tests unitaires avec `pytest` et `pytest-asyncio`, dans `tests/test_category.py`
+- Couverture : invariant de capacité, disponibilité initiale, `take()`, refus quand plus de place, mutex en concurrence (deux demandes pour la dernière place : une seule acceptée), `confirm_entry()`, `free()`, `release_hold()` et taux d'occupation
+- `conftest.py` à la racine pour que Python trouve les modules du projet
+- Résultat : 14 tests sur 14 passent
+
+## 14. CI/CD
+
+- Pipeline GitHub Actions (`.github/workflows/ci.yml`) : installation des dépendances puis exécution des tests à chaque push
+- Pipeline au vert
+- Incident : PyCharm avait créé le fichier en `ci.py` au lieu de `ci.yml`, donc le workflow n'était pas détecté. Corrigé en renommant le fichier puis nouveau commit.
+
+## 15. Base de données — passage à Supabase
+
+- Base PostgreSQL hébergée sur Supabase, connectée via l'URL du **transaction pooler** (et non l'URL directe) pour la compatibilité IPv4
+- Le mot de passe de la base est uniquement dans les variables d'environnement de Render. Le `.env` local est dans `.gitignore` et n'est jamais commité.
+
+## 16. Environnement Python local
+
+- Le venv pointait vers un Python 3.9 supprimé (`No Python at ...Python39\python.exe`). Python réinstallé depuis python.org, venv recréé avec `py -3.15 -m venv .venv`
+- `ModuleNotFoundError: pydantic_core._pydantic_core` (binaire compilé pour une autre version de Python). Corrigé avec `pip install --upgrade --force-reinstall -r requirements.txt`
+
+---
+
+## 28 octobre 2026 — Sécurité, intégration Booking, dashboard
+
+## 17. Sécurité : clé d'API
+
+- Toutes les routes `/parking/*` sont protégées par un en-tête `X-API-Key`
+- Implémentation : dépendance FastAPI `APIKeyHeader` (`infrastructure/api/security.py`), appliquée une seule fois sur le router, donc toutes les routes sont couvertes d'un coup
+- La clé vient de la variable d'environnement `API_KEY`. En local, sans variable, la valeur par défaut est `dev-secret-key`.
+- Sur Render, la clé est dans les variables d'environnement. Elle est transmise hors GitHub aux services Access et Réservation, et n'apparaît jamais dans le dépôt.
+- Une clé absente ou fausse renvoie `401 Unauthorized`
+- `/health`, `/dashboard` et `/docs` restent accessibles sans clé. Le dashboard envoie la clé lui-même.
+
+## 18. Test de la communication avec le service Réservation
+
+- Le service Access étant indisponible ce jour-là, test avec Réservation
+- Le collègue de Réservation a appelé l'API avec l'URL Render et la clé : 10 places STANDARD disponibles, mais **aucune place XL**
+- Cause : XL était à 12 walk-in / 0 booking, donc rien de réservable
+- Correction : XL passe à 10 walk-in / 2 booking dans `DEFAULT_CATEGORIES`. Comme les catégories sont créées une seule fois au démarrage, la ligne XL a été supprimée dans Supabase pour qu'elle soit recréée avec les nouvelles capacités au redéploiement.
+- Vérification : `spot_available = 2` en booking pour XL
+
+## 19. Dashboard d'occupation (UI)
+
+- Page `/dashboard` (`infrastructure/api/static/dashboard.html`) servie par FastAPI avec `FileResponse` et `StaticFiles`
+- Une carte par catégorie : taux d'occupation, places occupées, libres, total, et barre de progression colorée (vert, orange, rouge selon le taux)
+- Rafraîchissement automatique toutes les 10 secondes via `fetch` sur `/parking/occupation`
+- HTML, CSS et JS dans un seul fichier, sans dépendance externe
+- Limite connue : la clé d'API est écrite en dur dans le JavaScript, donc visible par quiconque ouvre la page. Acceptable pour ce projet, mais en production il faudrait une vraie authentification utilisateur ou un proxy côté serveur.
+
+## 20. Champ `label` pour l'affichage
+
+- Besoin : le PDF généré par la partie messagerie affichait « STANDARD » en majuscules et « HANDICAPPED », terme jugé inapproprié
+- Décision : ne **pas** renommer les identifiants (`name`), qui servent de clés dans les routes, la base et chez les autres services. On ajoute un champ `label` d'affichage, calculé par `get_label()` à partir d'un dictionnaire `CATEGORY_LABELS` : Standard, PMR, Électrique, XL, Deux-roues
+- `label` est ajouté aux réponses `AvailabilityResponse`, `HoldResponse` et `OccupationResponse`. Aucun changement en base.
+- Le dashboard affiche maintenant `cat.label`
+- Les autres services peuvent utiliser `label` pour l'affichage, sans rien changer à leurs appels
+
+### Bugs rencontrés en local
+
+- **`ZoneInfoNotFoundError: 'No time zone found with key UTC'`** (erreur 500 sur `/parking/availability`). Windows n'a pas de base de fuseaux horaires et Tortoise ORM a besoin de `UTC`. Corrigé avec `pip install tzdata`, et `tzdata` ajouté à `requirements.txt`.
+- **401 sur le dashboard en local**. Le dashboard envoie la clé de production alors que le serveur local attend `dev-secret-key`. Corrigé en définissant `API_KEY` dans le terminal avant de lancer uvicorn.
+
+## 21. Points en suspens (état actuel)
+
+- Intégration RabbitMQ (consumer) — à coordonner avec Access et Réservation
+- Format des messages RabbitMQ à valider avec le groupe
+- Endpoint admin pour modifier la répartition walk-in / booking
+- Renommer éventuellement l'identifiant `HANDICAPPED` en `PMR` : impacte la base Supabase et le code de Réservation, à décider avec les collègues
+- Tester la communication avec Access quand leur service sera de nouveau disponible
