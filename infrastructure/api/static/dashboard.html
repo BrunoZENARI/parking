@@ -60,7 +60,11 @@
     <p class="refresh">Actualisation automatique toutes les 10 secondes</p>
 
     <script>
-        const API_KEY = 'parking-secret-2025';
+        let API_KEY = sessionStorage.getItem('parking_api_key');
+        if (!API_KEY) {
+            API_KEY = prompt("Clé d'API du service Parking :") || '';
+            sessionStorage.setItem('parking_api_key', API_KEY);
+        }
         const HEADERS = { 'X-API-Key': API_KEY, 'Content-Type': 'application/json' };
         const ACTIONS = {
             hold: 'Place réservée (hold)',
@@ -73,6 +77,11 @@
         async function load() {
             try {
                 const res = await fetch('/parking/occupation', { headers: HEADERS });
+                if (res.status === 401) {
+                    sessionStorage.removeItem('parking_api_key');
+                    document.getElementById('last-update').textContent = "Clé d'API invalide — recharge la page";
+                    return;
+                }
                 const data = await res.json();
                 const ORDER = ['STANDARD', 'HANDICAPPED', 'ELECTRIC', 'XL', 'TWO_WHEELS'];
                 data.categories.sort((a, b) => ORDER.indexOf(a.category_name) - ORDER.indexOf(b.category_name));
