@@ -19,22 +19,57 @@
         .green { color: #4ade80; } .orange { color: #fb923c; } .red { color: #f87171; }
         .bar.green { background: #4ade80; } .bar.orange { background: #fb923c; } .bar.red { background: #f87171; }
         .refresh { text-align: center; margin-top: 2rem; color: #475569; font-size: 0.8rem; }
+
+        .panel { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 1.5rem; margin-top: 2rem; }
+        .panel h2 { font-size: 1rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 1rem; }
+        .controls { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; }
+        select, button { font-family: inherit; font-size: 0.9rem; padding: 0.5rem 0.9rem; border-radius: 8px; border: 1px solid #475569; background: #0f172a; color: #e2e8f0; }
+        button { cursor: pointer; background: #0369a1; border-color: #0369a1; }
+        button:hover { background: #0284c7; }
+        button.secondary { background: #334155; border-color: #475569; }
+        button.secondary:hover { background: #475569; }
+        .hint { color: #64748b; font-size: 0.8rem; margin-top: 0.75rem; }
+        .log { margin-top: 1rem; max-height: 220px; overflow-y: auto; font-family: Consolas, monospace; font-size: 0.8rem; }
+        .log div { padding: 0.35rem 0.5rem; border-bottom: 1px solid #334155; }
+        .log .ok { color: #4ade80; } .log .ko { color: #f87171; }
     </style>
 </head>
 <body>
     <h1>🅿️ Parking Dashboard</h1>
     <p class="subtitle" id="last-update">Chargement...</p>
     <div class="grid" id="grid"></div>
+
+    <div class="panel">
+        <h2>Actions</h2>
+        <div class="controls">
+            <select id="category"></select>
+            <select id="ctype">
+                <option value="walkin">walkin</option>
+                <option value="booking">booking</option>
+            </select>
+            <button onclick="act('hold')">1. Réserver une place (hold)</button>
+            <button onclick="act('confirm_entry')">2. Valider l'entrée du véhicule</button>
+            <button class="secondary" onclick="act('free')">3. Enregistrer la sortie</button>
+        </div>
+        <p class="hint">Un hold expire après 30 secondes s'il n'est pas confirmé.</p>
+        <div class="log" id="log"></div>
+    </div>
+
     <p class="refresh">Actualisation automatique toutes les 10 secondes</p>
 
     <script>
         const API_KEY = 'parking-secret-2025';
+        const HEADERS = { 'X-API-Key': API_KEY, 'Content-Type': 'application/json' };
+        const ACTIONS = {
+            hold: 'Place réservée (hold)',
+            confirm_entry: 'Entrée validée',
+            free: 'Sortie enregistrée'
+        };
+        let selectFilled = false;
 
         async function load() {
             try {
-                const res = await fetch('/parking/occupation', {
-                    headers: { 'X-API-Key': API_KEY }
-                });
+                const res = await fetch('/parking/occupation', { headers: HEADERS });
                 const data = await res.json();
                 const grid = document.getElementById('grid');
                 grid.innerHTML = '';
@@ -42,13 +77,14 @@
                 data.categories.forEach(cat => {
                     const pct = Math.round(cat.occupation_rate * 100);
                     const cls = pct < 50 ? 'green' : pct < 80 ? 'orange' : 'red';
-                    const dispo = cat.total_capacity - cat.spot_taken;
+                    const dispo = cat.total_capacity - cat.spot_taken - cat.spot_held;
                     grid.innerHTML += `
                         <div class="card">
                             <h2>${cat.label}</h2>
                             <div class="rate ${cls}">${pct}%</div>
                             <div class="stats">
                                 <span>🚗 Occupées : <b>${cat.spot_taken}</b></span>
+                                <span>⏳ En attente : <b>${cat.spot_held}</b></span>
                                 <span>✅ Libres : <b>${dispo}</b></span>
                                 <span>📦 Total : <b>${cat.total_capacity}</b></span>
                             </div>
@@ -56,11 +92,53 @@
                         </div>`;
                 });
 
+                if (!selectFilled) {
+                    const sel = document.getElementById('category');
+                    data.categories.forEach(cat => {
+                        const opt = document.createElement('option');
+                        opt.value = cat.category_name;
+                        opt.textContent = cat.label;
+                        sel.appendChild(opt);
+                    });
+                    selectFilled = true;
+                }
+
                 document.getElementById('last-update').textContent =
                     'Dernière mise à jour : ' + new Date().toLocaleTimeString('fr-FR');
-            } catch(e) {
+            } catch (e) {
                 document.getElementById('last-update').textContent = 'Erreur de chargement';
             }
+        }
+
+        function addLog(ok, text) {
+            const log = document.getElementById('log');
+            const line = document.createElement('div');
+            line.className = ok ? 'ok' : 'ko';
+            line.textContent = new Date().toLocaleTimeString('fr-FR') + '  ' + (ok ? '✔ ' : '✘ ') + text;
+            log.prepend(line);
+        }
+
+        async function act(action) {
+            const category_name = document.getElementById('category').value;
+            const commercial_type = document.getElementById('ctype').value;
+            const label = document.getElementById('category').selectedOptions[0].textContent;
+            try {
+                const res = await fetch('/parking/' + action, {
+                    method: 'POST',
+                    headers: HEADERS,
+                    body: JSON.stringify({ category_name, commercial_type })
+                });
+                const body = await res.json().catch(() => ({}));
+                if (res.ok) {
+                    const extra = body.hold_id ? ' (hold #' + body.hold_id + ')' : '';
+                    addLog(true, ACTIONS[action] + ' — ' + label + ' / ' + commercial_type + extra);
+                } else {
+                    addLog(false, ACTIONS[action] + ' refusé (' + res.status + ') : ' + (body.detail || 'erreur'));
+                }
+            } catch (e) {
+                addLog(false, ACTIONS[action] + ' : erreur réseau');
+            }
+            load();
         }
 
         load();

@@ -75,6 +75,7 @@ class OccupationResponse(BaseModel):
     occupation_rate: float
     spot_taken: int
     total_capacity: int
+    spot_held: int
 
 
 class AllCategoriesResponse(BaseModel):
@@ -83,13 +84,25 @@ class AllCategoriesResponse(BaseModel):
 
 # --- Helpers ---
 
+def _held(c: Category) -> int:
+    """Places en attente (holds actifs) = stock virtuel retiré mais pas encore confirmé."""
+    walkin = c.walkin_capacity - c.spot_taken_walkin - c.spot_available_walkin
+    booking = c.booking_capacity - c.spot_taken_booking - c.spot_available_booking
+    return max(0, walkin) + max(0, booking)
+
+
 async def _cleanup_expired_holds(category: Category, category_name: str):
+    category_id = await category_repo.get_id_by_name(category_name)
     expired = await hold_repo.get_expired_active()
+    released = False
     for hold in expired:
+        if hold.category_id != category_id:
+            continue
         hold.status = HoldStatus.EXPIRED
-        category.release_hold(hold.commercial_type)
+        await category.release_hold(hold.commercial_type)
         await hold_repo.save(hold)
-    if expired:
+        released = True
+    if released:
         await category_repo.save(category)
 
 
@@ -201,6 +214,8 @@ async def get_occupation(category_name: str):
     if not category:
         raise HTTPException(status_code=404, detail=f"Catégorie {category_name} introuvable")
 
+    await _cleanup_expired_holds(category, category_name.upper())
+
     total_taken = category.spot_taken_walkin + category.spot_taken_booking
     return OccupationResponse(
         category_name=category_name.upper(),
@@ -208,6 +223,7 @@ async def get_occupation(category_name: str):
         occupation_rate=category.occupation_rate(),
         spot_taken=total_taken,
         total_capacity=category.total_capacity,
+        spot_held=_held(category),
     )
 
 
@@ -218,6 +234,9 @@ async def get_occupation(category_name: str):
 )
 async def get_all_occupation():
     categories = await category_repo.get_all()
+    for c in categories:
+        await _cleanup_expired_holds(c, c.name)
+
     result = [
         OccupationResponse(
             category_name=c.name,
@@ -225,6 +244,7 @@ async def get_all_occupation():
             occupation_rate=c.occupation_rate(),
             spot_taken=c.spot_taken_walkin + c.spot_taken_booking,
             total_capacity=c.total_capacity,
+            spot_held=_held(c),
         )
         for c in categories
     ]

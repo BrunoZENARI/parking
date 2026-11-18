@@ -10,6 +10,8 @@ venv/
 db/
 *.db
 *.sqlite
+*.db-shm
+*.db-wal
 
 # IDE
 .idea/
