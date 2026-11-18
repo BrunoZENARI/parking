@@ -68,6 +68,7 @@
             free: 'Sortie enregistrée'
         };
         let selectFilled = false;
+        let lastHoldId = null;
 
         async function load() {
             try {
@@ -127,14 +128,26 @@
             const commercial_type = document.getElementById('ctype').value;
             const label = document.getElementById('category').selectedOptions[0].textContent;
             const typeLabel = document.getElementById('ctype').selectedOptions[0].textContent;
+
+            const payload = { category_name, commercial_type };
+            if (action === 'confirm_entry') {
+                if (!lastHoldId) {
+                    addLog(false, 'Réservez d\'abord une place (étape 1) avant de valider l\'entrée');
+                    return;
+                }
+                payload.hold_id = lastHoldId;
+            }
+
             try {
                 const res = await fetch('/parking/' + action, {
                     method: 'POST',
                     headers: HEADERS,
-                    body: JSON.stringify({ category_name, commercial_type })
+                    body: JSON.stringify(payload)
                 });
                 const body = await res.json().catch(() => ({}));
                 if (res.ok) {
+                    if (action === 'hold') lastHoldId = body.hold_id;
+                    if (action === 'confirm_entry') lastHoldId = null;
                     const extra = body.hold_id ? ' (hold #' + body.hold_id + ')' : '';
                     addLog(true, ACTIONS[action] + ' — ' + label + ' / ' + typeLabel + extra);
                 } else {

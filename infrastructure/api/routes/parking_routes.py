@@ -69,6 +69,12 @@ class EntryExitRequest(BaseModel):
     commercial_type: CommercialType
 
 
+class ConfirmEntryRequest(BaseModel):
+    category_name: str
+    commercial_type: CommercialType
+    hold_id: int
+
+
 class OccupationResponse(BaseModel):
     category_name: str
     label: str
@@ -177,13 +183,30 @@ async def create_hold(request: HoldRequest):
 @router.post(
     "/confirm_entry",
     status_code=200,
-    summary="Confirmer l'entrée d'un véhicule",
+    summary="Confirmer l'entrée d'un véhicule (nécessite un hold actif)",
 )
-async def confirm_entry(request: EntryExitRequest):
-    category = await category_repo.get_by_name(request.category_name.upper())
+async def confirm_entry(request: ConfirmEntryRequest):
+    name = request.category_name.upper()
+    category = await category_repo.get_by_name(name)
     if not category:
         raise HTTPException(status_code=404, detail=f"Catégorie {request.category_name} introuvable")
 
+    # Les holds expirés sont d'abord nettoyés, puis on relit celui demandé
+    await _cleanup_expired_holds(category, name)
+
+    hold = await hold_repo.get_by_id(request.hold_id)
+    if not hold:
+        raise HTTPException(status_code=404, detail=f"Hold {request.hold_id} introuvable")
+
+    category_id = await category_repo.get_id_by_name(name)
+    if hold.category_id != category_id or hold.commercial_type != request.commercial_type:
+        raise HTTPException(status_code=409, detail="Le hold ne correspond pas à la catégorie ou au type demandés")
+
+    if hold.status != HoldStatus.ACTIVE:
+        raise HTTPException(status_code=409, detail="Hold expiré ou déjà utilisé")
+
+    hold.confirm()
+    await hold_repo.save(hold)
     await category.confirm_entry(request.commercial_type)
     await category_repo.save(category)
     return {"message": "Entrée confirmée"}
