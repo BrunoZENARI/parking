@@ -71,6 +71,8 @@
             try {
                 const res = await fetch('/parking/occupation', { headers: HEADERS });
                 const data = await res.json();
+                const ORDER = ['STANDARD', 'HANDICAPPED', 'ELECTRIC', 'XL', 'TWO_WHEELS'];
+                data.categories.sort((a, b) => ORDER.indexOf(a.category_name) - ORDER.indexOf(b.category_name));
                 const grid = document.getElementById('grid');
                 grid.innerHTML = '';
 
