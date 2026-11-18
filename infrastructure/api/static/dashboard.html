@@ -12,7 +12,9 @@
         .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.5rem; }
         .card { background: #1e293b; border-radius: 12px; padding: 1.5rem; border: 1px solid #334155; }
         .card h2 { font-size: 1rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 1rem; }
-        .stats { display: flex; justify-content: space-between; margin-bottom: 0.75rem; font-size: 0.9rem; }
+        .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.5rem; margin-bottom: 1rem; text-align: center; }
+        .stat b { display: block; font-size: 1.3rem; }
+        .stat span { font-size: 0.7rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.03em; }
         .rate { font-size: 2rem; font-weight: bold; margin-bottom: 0.75rem; }
         .bar-bg { background: #334155; border-radius: 999px; height: 10px; overflow: hidden; }
         .bar { height: 100%; border-radius: 999px; transition: width 0.5s ease; }
@@ -44,8 +46,8 @@
         <div class="controls">
             <select id="category"></select>
             <select id="ctype">
-                <option value="walkin">walkin</option>
-                <option value="booking">booking</option>
+                <option value="walkin">Sans réservation</option>
+                <option value="booking">Avec réservation</option>
             </select>
             <button onclick="act('hold')">1. Réserver une place (hold)</button>
             <button onclick="act('confirm_entry')">2. Valider l'entrée du véhicule</button>
@@ -85,10 +87,10 @@
                             <h2>${cat.label}</h2>
                             <div class="rate ${cls}">${pct}%</div>
                             <div class="stats">
-                                <span>🚗 Occupées : <b>${cat.spot_taken}</b></span>
-                                <span>⏳ En attente : <b>${cat.spot_held}</b></span>
-                                <span>✅ Libres : <b>${dispo}</b></span>
-                                <span>📦 Total : <b>${cat.total_capacity}</b></span>
+                                <div class="stat"><b>${cat.spot_taken}</b><span>Occupées</span></div>
+                                <div class="stat"><b>${cat.spot_held}</b><span>En attente</span></div>
+                                <div class="stat"><b>${dispo}</b><span>Libres</span></div>
+                                <div class="stat"><b>${cat.total_capacity}</b><span>Total</span></div>
                             </div>
                             <div class="bar-bg"><div class="bar ${cls}" style="width:${pct}%"></div></div>
                         </div>`;
@@ -124,6 +126,7 @@
             const category_name = document.getElementById('category').value;
             const commercial_type = document.getElementById('ctype').value;
             const label = document.getElementById('category').selectedOptions[0].textContent;
+            const typeLabel = document.getElementById('ctype').selectedOptions[0].textContent;
             try {
                 const res = await fetch('/parking/' + action, {
                     method: 'POST',
@@ -133,7 +136,7 @@
                 const body = await res.json().catch(() => ({}));
                 if (res.ok) {
                     const extra = body.hold_id ? ' (hold #' + body.hold_id + ')' : '';
-                    addLog(true, ACTIONS[action] + ' — ' + label + ' / ' + commercial_type + extra);
+                    addLog(true, ACTIONS[action] + ' — ' + label + ' / ' + typeLabel + extra);
                 } else {
                     addLog(false, ACTIONS[action] + ' refusé (' + res.status + ') : ' + (body.detail || 'erreur'));
                 }
