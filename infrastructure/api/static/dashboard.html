@@ -151,7 +151,11 @@
                     const extra = body.hold_id ? ' (hold #' + body.hold_id + ')' : '';
                     addLog(true, ACTIONS[action] + ' — ' + label + ' / ' + typeLabel + extra);
                 } else {
-                    addLog(false, ACTIONS[action] + ' refusé (' + res.status + ') : ' + (body.detail || 'erreur'));
+                    let msg = body.detail || 'erreur';
+                    if (Array.isArray(msg)) {
+                        msg = msg.map(d => d.loc.slice(1).join('.') + ' : ' + d.msg).join(' ; ');
+                    }
+                    addLog(false, 'Échec (' + res.status + ') : ' + msg);
                 }
             } catch (e) {
                 addLog(false, ACTIONS[action] + ' : erreur réseau');
