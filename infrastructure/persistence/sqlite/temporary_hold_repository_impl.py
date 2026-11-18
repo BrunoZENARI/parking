@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from domain.entities.category import CommercialType
@@ -31,7 +31,7 @@ class SQLiteTemporaryHoldRepository:
     async def get_expired_active(self) -> list[TemporaryHold]:
         models = await TemporaryHoldModel.filter(
             status=HoldStatus.ACTIVE.value,
-            end_at__lt=datetime.utcnow(),
+            end_at__lt=datetime.now(timezone.utc),
         )
         return [self._to_domain(m) for m in models]
 
@@ -42,7 +42,7 @@ class SQLiteTemporaryHoldRepository:
             category__name=category_name,
             commercial_type=commercial_type.value,
             status=HoldStatus.ACTIVE.value,
-            end_at__gt=datetime.utcnow(),
+            end_at__gt=datetime.now(timezone.utc),
         ).count()
         return category_model
 

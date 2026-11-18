@@ -1,5 +1,6 @@
+import logging
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from infrastructure.api.security import verify_api_key
@@ -13,6 +14,7 @@ from infrastructure.persistence.sqlite.temporary_hold_repository_impl import SQL
 router = APIRouter(prefix="/parking", tags=["Parking"], dependencies=[Depends(verify_api_key)])
 
 HOLD_TIMEOUT_SECONDS = int(os.getenv("HOLD_TIMEOUT_SECONDS", 30))
+logger = logging.getLogger("parking.metier")
 
 # Catégories par défaut — créées en base au démarrage si absentes
 DEFAULT_CATEGORIES: dict[str, Category] = {
@@ -107,6 +109,7 @@ async def _cleanup_expired_holds(category: Category, category_name: str):
         hold.status = HoldStatus.EXPIRED
         await category.release_hold(hold.commercial_type)
         await hold_repo.save(hold)
+        logger.info("hold %s expiré, place rendue (%s/%s)", hold.id, category_name, hold.commercial_type.value)
         released = True
     if released:
         await category_repo.save(category)
@@ -147,6 +150,7 @@ async def check_availability(category_name: str, commercial_type: CommercialType
     summary="Créer un hold temporaire sur une place",
 )
 async def create_hold(request: HoldRequest):
+    name_upper = request.category_name.upper()
     category = await category_repo.get_by_name(request.category_name.upper())
     if not category:
         raise HTTPException(status_code=404, detail=f"Catégorie {request.category_name} introuvable")
@@ -155,11 +159,12 @@ async def create_hold(request: HoldRequest):
 
     success = await category.take(request.commercial_type)
     if not success:
+        logger.warning("hold refusé : plus de place (%s/%s)", name_upper, request.commercial_type.value)
         raise HTTPException(status_code=409, detail="Aucune place disponible")
 
     await category_repo.save(category)
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     hold = TemporaryHold(
         id=0,
         category_id=await category_repo.get_id_by_name(request.category_name.upper()),
@@ -169,6 +174,7 @@ async def create_hold(request: HoldRequest):
         end_at=now + timedelta(seconds=HOLD_TIMEOUT_SECONDS),
     )
     saved_hold = await hold_repo.save(hold)
+    logger.info("hold %s créé (%s/%s)", saved_hold.id, name_upper, request.commercial_type.value)
 
     return HoldResponse(
         hold_id=saved_hold.id,
@@ -209,6 +215,7 @@ async def confirm_entry(request: ConfirmEntryRequest):
     await hold_repo.save(hold)
     await category.confirm_entry(request.commercial_type)
     await category_repo.save(category)
+    logger.info("entrée confirmée (hold %s, %s/%s)", hold.id, name, request.commercial_type.value)
     return {"message": "Entrée confirmée"}
 
 
@@ -224,6 +231,7 @@ async def free_spot(request: EntryExitRequest):
 
     await category.free(request.commercial_type)
     await category_repo.save(category)
+    logger.info("place libérée (%s/%s)", request.category_name.upper(), request.commercial_type.value)
     return {"message": "Place libérée avec succès"}
 
 

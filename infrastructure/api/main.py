@@ -9,8 +9,10 @@ from fastapi.responses import FileResponse
 
 from infrastructure.api.routes.parking_routes import DEFAULT_CATEGORIES, category_repo
 from infrastructure.api.routes.parking_routes import router as parking_router
+from infrastructure.api.logging_config import CorrelationIdMiddleware, setup_logging
 
-logging.basicConfig(level=logging.INFO)
+setup_logging()
+
 logger = logging.getLogger(__name__)
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite://db/parking.db")
@@ -26,6 +28,7 @@ app = FastAPI(
     version="1.0.0",
 )
 
+app.add_middleware(CorrelationIdMiddleware)
 app.include_router(parking_router)
 app.mount("/static", StaticFiles(directory="infrastructure/api/static"), name="static")
 
