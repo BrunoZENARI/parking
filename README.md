@@ -308,7 +308,9 @@ Aucune donnée personnelle n'est écrite dans les logs.
 - **Validation des entrées** : schémas Pydantic, types énumérés pour `commercial_type`, catégorie vérifiée avant toute opération.
 - **Erreurs** : codes HTTP explicites, sans détail interne.
 - **Base de données** : Row Level Security activé sur les tables Supabase, pour fermer l'API REST publique de Supabase.
-- **Limite connue** : le dashboard embarque la clé d'API dans son JavaScript. Acceptable pour ce projet, à remplacer par une vraie authentification utilisateur en production.
+- **Dashboard** : la clé d'API n'est pas dans le code (le dépôt est public). Le dashboard la demande à l'ouverture et la garde uniquement dans la session du navigateur (`sessionStorage`). Une clé invalide est oubliée et redemandée.
+- **Clé par défaut** : `dev-secret-key` n'est valable qu'en local. En production, `API_KEY` doit toujours être définie, sinon cette valeur publique s'applique.
+- **Limite connue** : une clé partagée unique n'identifie pas l'appelant et n'autorise rien de précis (hors périmètre du projet : pas d'autorisation, OAuth2 ni IAM).
 
 ---
 
