@@ -90,6 +90,11 @@ class AllCategoriesResponse(BaseModel):
     categories: list[OccupationResponse]
 
 
+class CategoryInfoResponse(BaseModel):
+    category_name: str
+    label: str
+
+
 # --- Helpers ---
 
 def _held(c: Category) -> int:
@@ -280,3 +285,12 @@ async def get_all_occupation():
         for c in categories
     ]
     return AllCategoriesResponse(categories=result)
+
+
+@router.get("/categories", response_model=list[CategoryInfoResponse])
+async def list_categories():
+    """Liste officielle des catégories : identifiant du contrat + libellé affiché."""
+    return [
+        CategoryInfoResponse(category_name=name, label=label)
+        for name, label in CATEGORY_LABELS.items()
+    ]

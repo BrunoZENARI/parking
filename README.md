@@ -5,7 +5,7 @@ Gestion du stock de places par catégorie pour le système de parking (projet fi
 | | |
 |---|---|
 | **Version** | 1.5.0 |
-| **Dernière mise à jour** | 18 novembre 2026 |
+| **Dernière mise à jour** | 24 novembre 2026 |
 | **Production** | https://parking-6r73.onrender.com |
 | **Documentation API** | https://parking-6r73.onrender.com/docs |
 | **Dashboard** | https://parking-6r73.onrender.com/dashboard |
@@ -20,7 +20,7 @@ Gestion du stock de places par catégorie pour le système de parking (projet fi
 | API | Fonctionnelle, documentée | 8 routes REST, Swagger sur `/docs`, erreurs 404 / 409 / 422 explicites, `/health` |
 | Intégration | Première intégration réalisée | Appels REST réels avec le service Réservation. Access : workflow hold / entrée / sortie à valider en conditions réelles. RabbitMQ : non intégré à ce jour |
 | UI | Fonctionnelle | Dashboard `/dashboard` : état des catégories, actions (hold, entrée, sortie), journal des résultats |
-| Qualité | En cours | 14 tests unitaires sur l'entité `Category` (invariants, hold, mutex en concurrence). À venir : tests de l'API et des entrées invalides |
+| Qualité | Tests automatisés | 43 tests : 14 unitaires sur l'entité `Category` (invariants, hold, mutex en concurrence) et 29 sur l'API (authentification, entrées invalides, cycle de vie des holds, `confirm_entry`, sortie, correlation ID), sur une base en mémoire |
 | Observabilité | En cours | Logs structurés avec `X-Correlation-ID` (reçu ou généré, renvoyé dans la réponse). `/metrics` Prometheus : à faire |
 | CI/CD | En place | GitHub Actions : tests à chaque push. Déploiement automatique sur Render à chaque push sur `main` |
 | Sécurité | Niveau de base | Authentification par clé d'API (`X-API-Key`) sur toutes les routes `/parking/*`, validation des entrées (Pydantic), secrets en variables d'environnement. Pas d'autorisation (hors périmètre) |
@@ -320,7 +320,14 @@ Aucune donnée personnelle n'est écrite dans les logs.
 pytest
 ```
 
-- 14 tests unitaires sur l'entité `Category` : invariant de capacité, disponibilité, `take`, `confirm_entry`, `free`, `release_hold`, taux d'occupation, mutex en concurrence.
+- 14 tests unitaires sur l'entité `Category` (`tests/test_category.py`) : invariant de capacité, disponibilité, `take`, `confirm_entry`, `free`, `release_hold`, taux d'occupation, mutex en concurrence.
+- 29 tests de l'API (`tests/test_api.py`), avec le client de test de FastAPI et une base SQLite en mémoire (aucune base réelle touchée, clé d'API de test définie dans `tests/conftest.py`) :
+  - authentification : sans clé ou avec une mauvaise clé, `401`, sauf `/health` ;
+  - entrées invalides : catégorie inconnue (`404`), type commercial invalide ou corps incomplet (`422`) ;
+  - holds : stock virtuel, places en attente, refus quand il n'y a plus de place (`409`) ;
+  - `confirm_entry` : hold absent, inconnu, déjà utilisé, mal assorti à la catégorie ou au type, expiré ;
+  - sortie, y compris sur un parking vide ;
+  - correlation ID : généré, repris s'il est valide, remplacé s'il est invalide.
 - Pipeline GitHub Actions (`.github/workflows/ci.yml`) : installation et exécution des tests à chaque push.
 - Déploiement : Render, automatique à chaque push sur `main`.
 

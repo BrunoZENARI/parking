@@ -224,3 +224,16 @@ def test_correlation_id_repris_si_valide(client):
 def test_correlation_id_invalide_remplace(client, mauvais):
     r = client.get("/health", headers={"X-Correlation-ID": mauvais})
     assert r.headers["X-Correlation-ID"] != mauvais
+
+
+# ── List Categories ────────────────────────────────────────────────────────────
+def test_list_categories(client):
+    r = client.get("/parking/categories", headers={"X-API-Key": "test-key"})
+    assert r.status_code == 200
+    names = {c["category_name"] for c in r.json()}
+    assert names == {"STANDARD", "HANDICAPPED", "ELECTRIC", "XL", "TWO_WHEELS"}
+
+
+def test_list_categories_requires_key(client):
+    r = client.get("/parking/categories")
+    assert r.status_code == 401
