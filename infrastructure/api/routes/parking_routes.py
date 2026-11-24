@@ -1,5 +1,6 @@
 import logging
 import os
+import asyncio
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -11,7 +12,20 @@ from domain.entities.temporary_hold import HoldStatus, TemporaryHold
 from infrastructure.persistence.sqlite.category_repository_impl import SQLiteCategoryRepository
 from infrastructure.persistence.sqlite.temporary_hold_repository_impl import SQLiteTemporaryHoldRepository
 
-router = APIRouter(prefix="/parking", tags=["Parking"], dependencies=[Depends(verify_api_key)])
+_stock_lock = asyncio.Lock()
+
+
+async def serialize_stock():
+    """Une seule opération sur le stock à la fois (évite les courses entre requêtes)."""
+    async with _stock_lock:
+        yield
+
+
+router = APIRouter(
+    prefix="/parking",
+    tags=["Parking"],
+    dependencies=[Depends(verify_api_key), Depends(serialize_stock)],
+)
 
 HOLD_TIMEOUT_SECONDS = int(os.getenv("HOLD_TIMEOUT_SECONDS", 30))
 logger = logging.getLogger("parking.metier")
@@ -244,9 +258,12 @@ async def confirm_entry(request: ConfirmEntryRequest):
     if hold.status != HoldStatus.ACTIVE:
         raise HTTPException(status_code=409, detail="Hold expiré ou déjà utilisé")
 
+    if not await category.confirm_entry(request.commercial_type):
+        logger.warning("entrée refusée : capacité atteinte (%s/%s)", name, request.commercial_type.value)
+        raise HTTPException(status_code=409, detail="Capacité atteinte, entrée refusée")
+
     hold.confirm()
     await hold_repo.save(hold)
-    await category.confirm_entry(request.commercial_type)
     await category_repo.save(category)
     logger.info("entrée confirmée (hold %s, %s/%s)", hold.id, name, request.commercial_type.value)
     return {"message": "Entrée confirmée"}

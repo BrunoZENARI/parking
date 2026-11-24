@@ -54,12 +54,17 @@ class Category:
                 self.spot_available_booking -= 1
             return True
 
-    async def confirm_entry(self, commercial_type: CommercialType) -> None:
+    async def confirm_entry(self, commercial_type: CommercialType) -> bool:
         async with self._lock:
             if commercial_type == CommercialType.WALKIN:
+                if self.spot_taken_walkin >= self.walkin_capacity:
+                    return False
                 self.spot_taken_walkin += 1
             else:
+                if self.spot_taken_booking >= self.booking_capacity:
+                    return False
                 self.spot_taken_booking += 1
+            return True
 
     async def free(self, commercial_type: CommercialType) -> None:
         async with self._lock:
@@ -75,9 +80,15 @@ class Category:
     async def release_hold(self, commercial_type: CommercialType) -> None:
         async with self._lock:
             if commercial_type == CommercialType.WALKIN:
-                self.spot_available_walkin += 1
+                self.spot_available_walkin = min(
+                    self.spot_available_walkin + 1,
+                    self.walkin_capacity - self.spot_taken_walkin,
+                )
             else:
-                self.spot_available_booking += 1
+                self.spot_available_booking = min(
+                    self.spot_available_booking + 1,
+                    self.booking_capacity - self.spot_taken_booking,
+                )
 
     def occupation_rate(self) -> float:
         total_taken = self.spot_taken_walkin + self.spot_taken_booking
