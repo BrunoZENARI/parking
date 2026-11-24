@@ -11,6 +11,7 @@ from domain.entities.category import Category, CommercialType
 from domain.entities.temporary_hold import HoldStatus, TemporaryHold
 from infrastructure.persistence.sqlite.category_repository_impl import SQLiteCategoryRepository
 from infrastructure.persistence.sqlite.temporary_hold_repository_impl import SQLiteTemporaryHoldRepository
+from infrastructure.api import metrics
 
 _stock_lock = asyncio.Lock()
 
@@ -157,6 +158,7 @@ async def _cleanup_expired_holds(category: Category, category_name: str):
         await category.release_hold(hold.commercial_type)
         await hold_repo.save(hold)
         logger.info("hold %s expiré, place rendue (%s/%s)", hold.id, category_name, hold.commercial_type.value)
+        metrics.HOLDS_EXPIRED.labels(category_name, hold.commercial_type.value).inc()
         released = True
     if released:
         await category_repo.save(category)
@@ -207,6 +209,8 @@ async def create_hold(request: HoldRequest):
     success = await category.take(request.commercial_type)
     if not success:
         logger.warning("hold refusé : plus de place (%s/%s)", name_upper, request.commercial_type.value)
+        metrics.HOLDS_CREATED.labels(name_upper, request.commercial_type.value).inc()
+        metrics.HOLDS_REFUSED.labels(name_upper, request.commercial_type.value).inc()
         raise HTTPException(status_code=409, detail="Aucune place disponible")
 
     await category_repo.save(category)
@@ -253,6 +257,8 @@ async def confirm_entry(request: ConfirmEntryRequest):
 
     category_id = await category_repo.get_id_by_name(name)
     if hold.category_id != category_id or hold.commercial_type != request.commercial_type:
+        metrics.ENTRIES_CONFIRMED.labels(name, request.commercial_type.value).inc()
+        metrics.ENTRIES_REFUSED.labels(name, request.commercial_type.value).inc()
         raise HTTPException(status_code=409, detail="Le hold ne correspond pas à la catégorie ou au type demandés")
 
     if hold.status != HoldStatus.ACTIVE:
@@ -277,11 +283,13 @@ async def confirm_entry(request: ConfirmEntryRequest):
 async def free_spot(request: EntryExitRequest):
     category = await category_repo.get_by_name(request.category_name.upper())
     if not category:
+        metrics.ENTRIES_REFUSED.labels(name, request.commercial_type.value).inc()
         raise HTTPException(status_code=404, detail=f"Catégorie {request.category_name} introuvable")
 
     await category.free(request.commercial_type)
     await category_repo.save(category)
     logger.info("place libérée (%s/%s)", request.category_name.upper(), request.commercial_type.value)
+    metrics.EXITS.labels(request.category_name.upper(), request.commercial_type.value).inc()
     return {"message": "Place libérée avec succès"}
 
 

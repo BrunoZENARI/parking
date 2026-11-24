@@ -1,6 +1,11 @@
 import logging
 import os
+import time
 
+from fastapi import Request, Response
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+
+from infrastructure.api import metrics
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -54,6 +59,25 @@ async def dashboard():
 @app.get("/dashboard3d", tags=["UI"])
 async def dashboard3d():
     return FileResponse("infrastructure/api/static/dashboard3d.html")
+
+
+@app.middleware("http")
+async def metrics_middleware(request: Request, call_next):
+    start = time.perf_counter()
+    response = await call_next(request)
+    route = request.scope.get("route")
+    path = route.path if route else "inconnu"   # modèle de route : évite un label par identifiant
+    if path != "/metrics":
+        metrics.HTTP_REQUESTS.labels(request.method, path, str(response.status_code)).inc()
+        metrics.HTTP_DURATION.labels(request.method, path).observe(time.perf_counter() - start)
+    return response
+
+
+@app.get("/metrics", tags=["Observabilité"], include_in_schema=False)
+async def prometheus_metrics():
+    for c in await category_repo.get_all():
+        metrics.update_stock_gauges(c)
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 @app.on_event("startup")
