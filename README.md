@@ -9,6 +9,8 @@ Gestion du stock de places par catégorie pour le système de parking (projet fi
 | **Production** | https://parking-6r73.onrender.com |
 | **Documentation API** | https://parking-6r73.onrender.com/docs |
 | **Dashboard** | https://parking-6r73.onrender.com/dashboard |
+| **Dashboard 3D** | https://parking-6r73.onrender.com/dashboard3d |
+| **Métriques Prometheus** | https://parking-6r73.onrender.com/metrics |
 
 ---
 
@@ -16,12 +18,12 @@ Gestion du stock de places par catégorie pour le système de parking (projet fi
 
 | Axe | Niveau | Détail |
 |---|---|---|
-| Métier | Fonctionnel | Stock réel et virtuel par catégorie, holds temporaires avec expiration, mutex par catégorie, libellés d'affichage. Non exposé : modification de la répartition walk-in / booking |
-| API | Fonctionnelle, documentée | 8 routes REST, Swagger sur `/docs`, erreurs 404 / 409 / 422 explicites, `/health` |
+| Métier | Fonctionnel | Stock réel et virtuel par catégorie, holds temporaires avec expiration, opérations sur le stock sérialisées, garde-fous de capacité, libellés d'affichage. Non exposé : modification de la répartition walk-in / booking |
+| API | Fonctionnelle, documentée | Routes REST `/parking/*` (dont `/parking/categories`, liste officielle des identifiants et libellés), Swagger sur `/docs`, erreurs 401 / 404 / 409 / 422 explicites, `/health`, `/metrics` |
 | Intégration | Première intégration réalisée | Appels REST réels avec le service Réservation. Access : workflow hold / entrée / sortie à valider en conditions réelles. RabbitMQ : non intégré à ce jour |
-| UI | Fonctionnelle | Dashboard `/dashboard` : état des catégories, actions (hold, entrée, sortie), journal des résultats |
-| Qualité | Tests automatisés | 43 tests : 14 unitaires sur l'entité `Category` (invariants, hold, mutex en concurrence) et 29 sur l'API (authentification, entrées invalides, cycle de vie des holds, `confirm_entry`, sortie, correlation ID), sur une base en mémoire |
-| Observabilité | En cours | Logs structurés avec `X-Correlation-ID` (reçu ou généré, renvoyé dans la réponse). `/metrics` Prometheus : à faire |
+| UI | Fonctionnelle | Dashboard `/dashboard` : état des catégories, actions (hold, entrée, sortie), journal des résultats. Vue 3D `/dashboard3d` : parking en trois dimensions alimenté par les données réelles |
+| Qualité | Tests automatisés | 45 tests : 14 unitaires sur l'entité `Category` (invariants, hold, mutex en concurrence) et 31 sur l'API (authentification, entrées invalides, cycle de vie des holds, `confirm_entry`, sortie, correlation ID, liste des catégories), sur une base en mémoire |
+| Observabilité | En place | Logs structurés avec `X-Correlation-ID` (reçu ou généré, renvoyé dans la réponse). `/metrics` au format Prometheus : métriques techniques (requêtes, erreurs, durées) et métier (holds, entrées, sorties, état du stock) |
 | CI/CD | En place | GitHub Actions : tests à chaque push. Déploiement automatique sur Render à chaque push sur `main` |
 | Sécurité | Niveau de base | Authentification par clé d'API (`X-API-Key`) sur toutes les routes `/parking/*`, validation des entrées (Pydantic), secrets en variables d'environnement. Pas d'autorisation (hors périmètre) |
 
@@ -35,6 +37,7 @@ Gestion du stock de places par catégorie pour le système de parking (projet fi
 - [Structure du projet](#structure-du-projet)
 - [API REST](#api-rest)
 - [Traçabilité et logs](#traçabilité-et-logs)
+- [Métriques Prometheus](#métriques-prometheus)
 - [Dashboard](#dashboard)
 - [Sécurité](#sécurité)
 - [Tests et CI/CD](#tests-et-cicd)
@@ -135,10 +138,12 @@ parking/
 │   │   ├── main.py                  # Application FastAPI + démarrage
 │   │   ├── security.py              # Authentification par clé d'API
 │   │   ├── logging_config.py        # Logs + middleware de correlation ID
+│   │   ├── metrics.py               # Déclaration des métriques Prometheus
 │   │   ├── routes/
 │   │   │   └── parking_routes.py    # Routes REST + schémas Pydantic
 │   │   └── static/
-│   │       └── dashboard.html       # UI de démonstration et d'exploitation
+│   │       ├── dashboard.html       # UI de démonstration et d'exploitation
+│   │       └── dashboard3d.html     # Vue 3D du parking (Three.js)
 │   ├── messaging/
 │   │   └── consumers/
 │   │       └── parking_consumer.py  # Consumer RabbitMQ (aio-pika) — non intégré
@@ -164,7 +169,7 @@ parking/
 
 Documentation interactive Swagger : **http://localhost:8001/docs**
 
-Toutes les routes `/parking/*` exigent l'en-tête `X-API-Key`. `/health`, `/dashboard` et `/docs` sont accessibles sans clé.
+Toutes les routes `/parking/*` exigent l'en-tête `X-API-Key`. `/health`, `/metrics`, `/dashboard`, `/dashboard3d` et `/docs` sont accessibles sans clé (les dashboards demandent la clé pour appeler l'API).
 
 ### Capacité du parking
 
@@ -238,7 +243,7 @@ Confirme l'entrée physique du véhicule (stock réel). Le `hold_id` renvoyé pa
 ```json
 {"category_name": "STANDARD", "commercial_type": "walkin", "hold_id": 1}
 ```
-Erreurs : `404` catégorie ou hold inconnu, `409` hold expiré, déjà utilisé, ou ne correspondant pas à la catégorie / au type, `422` champ manquant ou invalide.
+Erreurs : `404` catégorie ou hold inconnu, `409` hold expiré, déjà utilisé, ne correspondant pas à la catégorie / au type, ou capacité atteinte, `422` champ manquant ou invalide.
 
 #### `POST /parking/free`
 Libère une place suite à une sortie.
@@ -257,14 +262,35 @@ Taux d'occupation d'une catégorie.
   "occupation_rate": 0.25,
   "spot_taken": 20,
   "total_capacity": 80,
-  "spot_held": 1
+  "spot_held": 1,
+  "booking_capacity": 10,
+  "spot_taken_walkin": 15,
+  "spot_taken_booking": 5,
+  "spot_held_walkin": 1,
+  "spot_held_booking": 0
 }
 ```
 
-`spot_taken` : places réellement occupées. `spot_held` : places retenues par un hold actif, pas encore confirmées.
+`spot_taken` : places réellement occupées. `spot_held` : places retenues par un hold actif, pas encore confirmées. Les champs `*_walkin` et `*_booking` détaillent ces valeurs par type commercial (utilisés par la vue 3D pour remplir les places de réservation).
 
 #### `GET /parking/occupation`
 Taux d'occupation de toutes les catégories (même format, dans une liste `categories`).
+
+#### `GET /parking/categories`
+Liste officielle des catégories : identifiant du contrat (`category_name`) et libellé d'affichage (`label`). Permet aux autres services d'aligner leurs identifiants sur ceux de Parking.
+
+```json
+[
+  {"category_name": "STANDARD", "label": "Standard"},
+  {"category_name": "HANDICAPPED", "label": "PMR"},
+  {"category_name": "ELECTRIC", "label": "Électrique"},
+  {"category_name": "XL", "label": "XL"},
+  {"category_name": "TWO_WHEELS", "label": "Deux-roues"}
+]
+```
+
+#### `GET /metrics`
+Métriques au format Prometheus (voir ci-dessous). Accessible sans clé.
 
 ---
 
@@ -290,6 +316,35 @@ Aucune donnée personnelle n'est écrite dans les logs.
 
 ---
 
+## Métriques Prometheus
+
+`GET /metrics` expose les métriques au format texte Prometheus. Les compteurs repartent de zéro à chaque redémarrage du service.
+
+**Techniques**
+
+| Métrique | Type | Étiquettes |
+|---|---|---|
+| `parking_http_requests_total` | compteur | méthode, chemin (modèle de route), code HTTP |
+| `parking_http_request_duration_seconds` | histogramme | méthode, chemin |
+
+**Métier**
+
+| Métrique | Type | Signification |
+|---|---|---|
+| `parking_holds_created_total` | compteur | holds créés |
+| `parking_holds_refused_total` | compteur | holds refusés (plus de place) |
+| `parking_holds_expired_total` | compteur | holds expirés, place rendue |
+| `parking_entries_confirmed_total` | compteur | entrées confirmées |
+| `parking_entries_refused_total` | compteur | entrées refusées (capacité atteinte) |
+| `parking_exits_total` | compteur | sorties enregistrées |
+| `parking_spots_taken` | jauge | places occupées |
+| `parking_spots_held` | jauge | places en attente (holds actifs) |
+| `parking_spots_available` | jauge | places disponibles |
+
+Les métriques métier portent les étiquettes `category` et `commercial_type`. Les jauges sont recalculées depuis la base à chaque lecture de `/metrics`. Aucune donnée personnelle n'est exposée.
+
+---
+
 ## Dashboard
 
 `/dashboard` permet de manipuler et d'observer le service :
@@ -298,6 +353,8 @@ Aucune donnée personnelle n'est écrite dans les logs.
 - un panneau d'actions : réserver une place (hold), valider l'entrée, enregistrer la sortie
 - un journal du résultat de chaque action, avec le code d'erreur et le message en cas de refus
 - rafraîchissement automatique toutes les 10 secondes
+
+`/dashboard3d` affiche le parking en trois dimensions (Three.js, chargé depuis un CDN) à partir de `GET /parking/occupation` : blocs de places par catégorie répartis autour d'allées, entrée à droite et sortie à gauche, véhicules sur les places occupées (rouge) ou retenues par un hold (violet), places PMR en bleu, places de réservation en orange. La caméra se déplace à la souris. La disposition est une représentation du stock par catégorie, pas un suivi de véhicules précis.
 
 ---
 
@@ -321,13 +378,14 @@ pytest
 ```
 
 - 14 tests unitaires sur l'entité `Category` (`tests/test_category.py`) : invariant de capacité, disponibilité, `take`, `confirm_entry`, `free`, `release_hold`, taux d'occupation, mutex en concurrence.
-- 29 tests de l'API (`tests/test_api.py`), avec le client de test de FastAPI et une base SQLite en mémoire (aucune base réelle touchée, clé d'API de test définie dans `tests/conftest.py`) :
+- 31 tests de l'API (`tests/test_api.py`), avec le client de test de FastAPI et une base SQLite en mémoire (aucune base réelle touchée, clé d'API de test définie dans `tests/conftest.py`) :
   - authentification : sans clé ou avec une mauvaise clé, `401`, sauf `/health` ;
   - entrées invalides : catégorie inconnue (`404`), type commercial invalide ou corps incomplet (`422`) ;
   - holds : stock virtuel, places en attente, refus quand il n'y a plus de place (`409`) ;
   - `confirm_entry` : hold absent, inconnu, déjà utilisé, mal assorti à la catégorie ou au type, expiré ;
   - sortie, y compris sur un parking vide ;
-  - correlation ID : généré, repris s'il est valide, remplacé s'il est invalide.
+  - correlation ID : généré, repris s'il est valide, remplacé s'il est invalide ;
+  - liste des catégories (`/parking/categories`) : contenu et authentification.
 - Pipeline GitHub Actions (`.github/workflows/ci.yml`) : installation et exécution des tests à chaque push.
 - Déploiement : Render, automatique à chaque push sur `main`.
 
@@ -392,7 +450,12 @@ walkin_capacity + booking_capacity = total_capacity
 `active` → `confirmed` (entrée validée) ou `expired` (délai dépassé). Un hold n'est utilisable qu'une seule fois.
 
 ### Mutex
-Chaque catégorie possède son propre `asyncio.Lock()` : les opérations concurrentes sur une même catégorie sont sérialisées pour éviter les race conditions.
+Chaque catégorie possède son propre `asyncio.Lock()`. De plus, un verrou global (`serialize_stock`, dépendance du router `/parking`) fait passer les requêtes sur le stock une par une : la séquence complète lire, modifier, sauvegarder n'est jamais entrelacée entre deux requêtes. Cela suffit tant que le service tourne en une seule instance ; avec plusieurs instances, il faudrait un verrou en base (`SELECT ... FOR UPDATE`).
+
+### Garde-fous de capacité
+- `confirm_entry` refuse une entrée si les places occupées d'un type atteignent sa capacité (`409`, « Capacité atteinte, entrée refusée »).
+- `release_hold` ne peut jamais rendre plus de places que `capacité - places occupées`.
+- `free` ne fait rien quand aucune place n'est occupée.
 
 ### Frontières de responsabilité
 Parking ne connaît ni le véhicule, ni sa plaque, ni le paiement : il reçoit uniquement une catégorie et un type commercial. La compatibilité véhicule / place, la blacklist et la vérification de carte PMR relèvent d'Access.
