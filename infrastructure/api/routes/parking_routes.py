@@ -84,6 +84,11 @@ class OccupationResponse(BaseModel):
     spot_taken: int
     total_capacity: int
     spot_held: int
+    booking_capacity: int
+    spot_taken_walkin: int
+    spot_taken_booking: int
+    spot_held_walkin: int
+    spot_held_booking: int
 
 
 class AllCategoriesResponse(BaseModel):
@@ -97,11 +102,34 @@ class CategoryInfoResponse(BaseModel):
 
 # --- Helpers ---
 
+def _held_walkin(c: Category) -> int:
+    return max(0, c.walkin_capacity - c.spot_taken_walkin - c.spot_available_walkin)
+
+
+def _held_booking(c: Category) -> int:
+    return max(0, c.booking_capacity - c.spot_taken_booking - c.spot_available_booking)
+
+
 def _held(c: Category) -> int:
     """Places en attente (holds actifs) = stock virtuel retiré mais pas encore confirmé."""
-    walkin = c.walkin_capacity - c.spot_taken_walkin - c.spot_available_walkin
-    booking = c.booking_capacity - c.spot_taken_booking - c.spot_available_booking
-    return max(0, walkin) + max(0, booking)
+    return _held_walkin(c) + _held_booking(c)
+
+
+def _to_occupation(c: Category, name: str | None = None) -> OccupationResponse:
+    n = name or c.name
+    return OccupationResponse(
+        category_name=n,
+        label=get_label(n),
+        occupation_rate=c.occupation_rate(),
+        spot_taken=c.spot_taken_walkin + c.spot_taken_booking,
+        total_capacity=c.total_capacity,
+        spot_held=_held(c),
+        booking_capacity=c.booking_capacity,
+        spot_taken_walkin=c.spot_taken_walkin,
+        spot_taken_booking=c.spot_taken_booking,
+        spot_held_walkin=_held_walkin(c),
+        spot_held_booking=_held_booking(c),
+    )
 
 
 async def _cleanup_expired_holds(category: Category, category_name: str):
@@ -252,15 +280,7 @@ async def get_occupation(category_name: str):
 
     await _cleanup_expired_holds(category, category_name.upper())
 
-    total_taken = category.spot_taken_walkin + category.spot_taken_booking
-    return OccupationResponse(
-        category_name=category_name.upper(),
-        label=get_label(category_name),
-        occupation_rate=category.occupation_rate(),
-        spot_taken=total_taken,
-        total_capacity=category.total_capacity,
-        spot_held=_held(category),
-    )
+    return _to_occupation(category, category_name.upper())
 
 
 @router.get(
@@ -273,18 +293,7 @@ async def get_all_occupation():
     for c in categories:
         await _cleanup_expired_holds(c, c.name)
 
-    result = [
-        OccupationResponse(
-            category_name=c.name,
-            label=get_label(c.name),
-            occupation_rate=c.occupation_rate(),
-            spot_taken=c.spot_taken_walkin + c.spot_taken_booking,
-            total_capacity=c.total_capacity,
-            spot_held=_held(c),
-        )
-        for c in categories
-    ]
-    return AllCategoriesResponse(categories=result)
+    return AllCategoriesResponse(categories=[_to_occupation(c) for c in categories])
 
 
 @router.get("/categories", response_model=list[CategoryInfoResponse])

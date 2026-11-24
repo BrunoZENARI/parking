@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Parking 3D</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0f1419; color: #e6edf3;
+               font-family: system-ui, Segoe UI, sans-serif; overflow: hidden; }
+  canvas { display: block; }
+  #hud { position: fixed; top: 12px; left: 12px; background: rgba(22,27,34,.88);
+         border: 1px solid #30363d; border-radius: 10px; padding: 12px 14px; font-size: 14px;
+         min-width: 220px; }
+  #hud h1 { font-size: 15px; margin: 0 0 8px; }
+  .row { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
+  .dot { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+  #status { margin-top: 8px; color: #8b949e; font-size: 12px; }
+  #links { margin-top: 8px; font-size: 12px; }
+  #links a { color: #58a6ff; text-decoration: none; }
+</style>
+<script type="importmap">
+{ "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="hud">
+  <h1>Parking en 3D</h1>
+  <div class="row"><span class="dot" style="background:#e5534b"></span><span id="n-occ">Occupées : –</span></div>
+  <div class="row"><span class="dot" style="background:#a371f7"></span><span id="n-held">En attente : –</span></div>
+  <div class="row"><span class="dot" style="background:#3fb950"></span><span id="n-free">Libres : –</span></div>
+  <div class="row"><span class="dot" style="background:#1f6fd1"></span><span>Place PMR</span></div>
+  <div class="row"><span class="dot" style="background:#d9822b"></span><span>Place réservation (booking)</span></div>
+  <div id="status">Chargement…</div>
+  <div id="links"><a href="/dashboard">← Dashboard classique</a></div>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const API_URL = '/parking/occupation';
+const REFRESH_MS = 10000;
+const ORDER = ['STANDARD', 'HANDICAPPED', 'ELECTRIC', 'XL', 'TWO_WHEELS'];
+const TARGET_BLOCK_WIDTH = 38;   // largeur visée d'un bloc de places
+const LANE = 4.6;                // largeur d'une allée de manœuvre
+const CORRIDOR = 12;             // allée centrale (entrée / sortie)
+const BLOCK_GAP = 5;             // espace entre deux blocs
+// Places réservées au booking, utilisées tant que l'API ne renvoie pas booking_capacity
+const BOOKING_FALLBACK = { STANDARD: 10, XL: 2 };
+
+// ---------- Clé API (jamais écrite dans le code) ----------
+function getKey() {
+  let k = sessionStorage.getItem('parking_api_key');
+  if (!k) {
+    k = prompt('Clé API du service Parking :');
+    if (k) sessionStorage.setItem('parking_api_key', k);
+  }
+  return k;
+}
+
+// ---------- Scène ----------
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.setSize(window.innerWidth, window.innerHeight);
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0f1419);
+
+const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 600);
+camera.position.set(0, 80, 110);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.maxPolarAngle = Math.PI / 2.05;
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.75));
+const sun = new THREE.DirectionalLight(0xffffff, 0.9);
+sun.position.set(40, 90, 30);
+scene.add(sun);
+
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(600, 600),
+  new THREE.MeshStandardMaterial({ color: 0x161c23 })
+);
+ground.rotation.x = -Math.PI / 2;
+ground.position.y = -0.03;
+scene.add(ground);
+
+const world = new THREE.Group();
+scene.add(world);
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// ---------- Géométries et matériaux partagés ----------
+const GEO = {};
+const geo = (key, make) => (GEO[key] ??= make());
+const box = (w, h, l) => geo(`b${w}|${h}|${l}`, () => new THREE.BoxGeometry(w, h, l));
+const cyl = (r, h) => geo(`c${r}|${h}`, () => new THREE.CylinderGeometry(r, r, h, 16));
+
+const M = {
+  occupied: new THREE.MeshStandardMaterial({ color: 0xe5534b }),
+  held: new THREE.MeshStandardMaterial({ color: 0xa371f7, transparent: true, opacity: 0.65 }),
+  glass: new THREE.MeshStandardMaterial({ color: 0x9cc3e6, metalness: 0.3, roughness: 0.2 }),
+  tire: new THREE.MeshStandardMaterial({ color: 0x111111 }),
+  dark: new THREE.MeshStandardMaterial({ color: 0x222831 }),
+  light: new THREE.MeshBasicMaterial({ color: 0xfff2b0 }),
+  asphalt: new THREE.MeshStandardMaterial({ color: 0x2a313a }),
+  line: new THREE.MeshBasicMaterial({ color: 0xd9b44a }),
+  booth: new THREE.MeshStandardMaterial({ color: 0x59636e }),
+  red: new THREE.MeshStandardMaterial({ color: 0xd64545 }),
+  white: new THREE.MeshStandardMaterial({ color: 0xf2f2f2 }),
+  slab: {
+    occupied: new THREE.MeshStandardMaterial({ color: 0x4a2a28 }),
+    held: new THREE.MeshStandardMaterial({ color: 0x3d2f66 }),
+    free: new THREE.MeshStandardMaterial({ color: 0x1f5a31 }),
+    pmr: new THREE.MeshStandardMaterial({ color: 0x1f6fd1 }),
+    booking: new THREE.MeshStandardMaterial({ color: 0xd9822b }),
+  },
+};
+
+// ---------- Dimensions par catégorie ----------
+function dims(name) {
+  if (name === 'TWO_WHEELS') return { pitchX: 2.0, pitchZ: 3.6 };
+  if (name === 'XL')         return { pitchX: 4.2, pitchZ: 7.4 };
+  if (name === 'HANDICAPPED') return { pitchX: 4.6, pitchZ: 6.6 };
+  return                           { pitchX: 3.2, pitchZ: 5.8 };
+}
+
+function place(mesh, x, y, z) { mesh.position.set(x, y, z); return mesh; }
+
+// ---------- Véhicules (l'avant est tourné vers +z) ----------
+function makeVehicle(name, state) {
+  const g = new THREE.Group();
+  const body = M[state];
+
+  if (name === 'TWO_WHEELS') {
+    g.add(place(new THREE.Mesh(box(0.35, 0.45, 1.3), body), 0, 0.65, 0));
+    for (const z of [-0.7, 0.7]) {
+      const w = new THREE.Mesh(cyl(0.38, 0.16), M.tire);
+      w.rotation.z = Math.PI / 2;
+      g.add(place(w, 0, 0.38, z));
+    }
+    g.add(place(new THREE.Mesh(box(0.9, 0.07, 0.07), M.dark), 0, 1.05, 0.5));
+    g.add(place(new THREE.Mesh(box(0.34, 0.55, 0.32), M.dark), 0, 1.1, -0.1));
+    return g;
+  }
+
+  const big = name === 'XL';
+  const w = big ? 2.4 : 1.9;
+  const l = big ? 5.6 : 4.2;
+  const h = big ? 1.9 : 0.8;
+  const r = big ? 0.5 : 0.38;
+
+  g.add(place(new THREE.Mesh(box(w, h, l), body), 0, 0.4 + h / 2, 0));
+
+  if (big) {
+    g.add(place(new THREE.Mesh(box(w * 0.88, 0.7, 0.12), M.glass), 0, 0.4 + h * 0.72, l / 2 + 0.01));
+  } else {
+    g.add(place(new THREE.Mesh(box(w * 0.84, 0.62, l * 0.5), M.glass), 0, 0.4 + h + 0.31, -l * 0.05));
+  }
+
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) {
+      const wh = new THREE.Mesh(cyl(r, 0.28), M.tire);
+      wh.rotation.z = Math.PI / 2;
+      g.add(place(wh, sx * (w / 2), r, sz * l * 0.3));
+    }
+    g.add(place(new THREE.Mesh(box(0.3, 0.16, 0.06), M.light), sx * w * 0.32, 0.4 + h * 0.45, l / 2 + 0.02));
+  }
+  return g;
+}
+
+// ---------- Étiquettes ----------
+function makeLabel(text, bg = 'rgba(22,27,34,0.85)', scale = [12, 3]) {
+  const c = document.createElement('canvas');
+  c.width = 512; c.height = 128;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, 512, 128);
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 54px system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, 256, 64);
+  const tex = new THREE.CanvasTexture(c);
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex }));
+  sprite.scale.set(scale[0], scale[1], 1);
+  return sprite;
+}
+
+// ---------- Lecture des données ----------
+const num = (v) => (Number.isFinite(+v) ? +v : 0);
+const extractList = (data) =>
+  Array.isArray(data) ? data : (data.categories || data.items || Object.values(data));
+
+function statsOf(c) {
+  const total = c.total_capacity ?? c.total ?? (num(c.walkin_capacity) + num(c.booking_capacity));
+  const occupied = c.spot_taken ?? c.occupied ?? c.taken ??
+    (num(c.spot_taken_walkin) + num(c.spot_taken_booking));
+  const held = c.spot_held ?? c.held ?? 0;
+  // Détail par type commercial : renvoyé seulement si l'API le fournit
+  const split = ['spot_taken_walkin', 'spot_taken_booking', 'spot_held_walkin', 'spot_held_booking']
+    .every((k) => c[k] !== undefined);
+  return { total: num(total), occupied: num(occupied), held: num(held),
+           booking: num(c.booking_capacity), split,
+           tw: num(c.spot_taken_walkin), tb: num(c.spot_taken_booking),
+           hw: num(c.spot_held_walkin), hb: num(c.spot_held_booking) };
+}
+
+// ---------- Disposition « tetris » : blocs compacts répartis en deux colonnes ----------
+function blockSize(cat) {
+  const d = dims(cat.name);
+  const cols = Math.max(1, Math.floor(TARGET_BLOCK_WIDTH / d.pitchX));
+  const rows = Math.max(1, Math.ceil(cat.total / cols));
+  const pairs = Math.ceil(rows / 2);
+  const width = Math.min(cols, Math.max(1, cat.total)) * d.pitchX;
+  const depth = pairs * (2 * d.pitchZ + LANE) + LANE;
+  return { cols, rows, width, depth, d };
+}
+
+function pack(cats) {
+  const items = cats.map((c) => ({ cat: c, size: blockSize(c) }))
+    .sort((a, b) => b.size.width * b.size.depth - a.size.width * a.size.depth);
+  const columns = [{ items: [], depth: 0, width: 0 }, { items: [], depth: 0, width: 0 }];
+  for (const it of items) {
+    const col = columns[0].depth <= columns[1].depth ? columns[0] : columns[1];
+    col.items.push(it);
+    col.depth += it.size.depth + (col.items.length > 1 ? BLOCK_GAP : 0);
+    col.width = Math.max(col.width, it.size.width);
+  }
+  return columns;
+}
+
+// ---------- Construction ----------
+function clearWorld() {
+  while (world.children.length) {
+    const child = world.children.pop();
+    child.traverse((o) => {
+      if (o.isSprite) { o.material.map.dispose(); o.material.dispose(); }
+    });
+  }
+}
+
+function addGate(x, z, dir, label, bg) {
+  // dir = -1 : barrière vers la gauche, +1 : vers la droite
+  for (let i = 0; i < 5; i++) {
+    const seg = new THREE.Mesh(box(1, 0.22, 0.22), i % 2 ? M.white : M.red);
+    world.add(place(seg, x + dir * (1.3 + i), 1.7, z));
+  }
+  const sign = makeLabel(label, bg, [6, 1.5]);
+  world.add(place(sign, x + dir * 3.6, 4.6, z));
+}
+
+function build(list) {
+  clearWorld();
+  const cats = list
+    .map((c) => ({
+      name: String(c.category_name || '').toUpperCase(),
+      label: c.label || c.category_name,
+      ...statsOf(c),
+    }))
+    .map((c) => ({ ...c, booking: c.booking || BOOKING_FALLBACK[c.name] || 0 }))
+    .filter((c) => c.total > 0)
+    .sort((a, b) => ORDER.indexOf(a.name) - ORDER.indexOf(b.name));
+
+  let totalOcc = 0, totalHeld = 0, totalAll = 0;
+  const columns = pack(cats);
+  const totalW = columns[0].width + CORRIDOR + columns[1].width;
+  const D = Math.max(columns[0].depth, columns[1].depth);
+
+  const colX0 = [-totalW / 2, totalW / 2 - columns[1].width];
+
+  columns.forEach((col, ci) => {
+    let z0 = 0;
+    col.items.forEach(({ cat, size }) => {
+      const { cols, d } = size;
+      const free = Math.max(0, cat.total - cat.occupied - cat.held);
+      // Remplissage : les réservations (booking) occupent les places orange,
+      // les entrées sans réservation (walk-in) occupent les autres.
+      const group = (n, occ, held) =>
+        Array.from({ length: n }, (_, k) => (k < occ ? 'occupied' : k < occ + held ? 'held' : 'free'));
+      let states;
+      if (cat.split && cat.booking > 0) {
+        states = [
+          ...group(cat.total - cat.booking, cat.tw, cat.hw),
+          ...group(cat.booking, cat.tb, cat.hb),
+        ];
+      } else {
+        states = [
+          ...Array(cat.occupied).fill('occupied'),
+          ...Array(cat.held).fill('held'),
+          ...Array(free).fill('free'),
+        ].slice(0, cat.total);
+      }
+
+      const x0 = colX0[ci] + (col.width - size.width) / 2;
+
+      // Sol du bloc (places + allées de manœuvre)
+      const plate = new THREE.Mesh(box(size.width + 1.5, 0.03, size.depth), M.asphalt);
+      world.add(place(plate, x0 + size.width / 2, 0.01, z0 + size.depth / 2));
+
+      for (let i = 0; i < cat.total; i++) {
+        const r = Math.floor(i / cols), c = i % cols;
+        const pair = Math.floor(r / 2), within = r % 2;
+        const x = x0 + d.pitchX * (c + 0.5);
+        const z = z0 + LANE + pair * (2 * d.pitchZ + LANE) + within * d.pitchZ + d.pitchZ / 2;
+        const state = states[i];
+
+        // Une place libre garde la couleur de sa catégorie : bleu PMR, orange réservation, vert sinon
+        let slabMat = M.slab[state];
+        if (cat.name === 'HANDICAPPED') slabMat = M.slab.pmr;                 // toujours bleu
+        else if (i >= cat.total - cat.booking) slabMat = M.slab.booking;      // toujours orange
+        const slab = new THREE.Mesh(box(d.pitchX * 0.9, 0.06, d.pitchZ * 0.94), slabMat);
+        world.add(place(slab, x, 0.06, z));
+
+        if (state !== 'free') {
+          const v = makeVehicle(cat.name, state);
+          v.position.set(x, 0.09, z);
+          v.rotation.y = within === 0 ? Math.PI : 0;   // chaque rangée regarde son allée
+          world.add(v);
+        }
+      }
+
+      const lab = makeLabel(`${cat.label}  ${cat.occupied}/${cat.total}`);
+      world.add(place(lab, x0 + size.width / 2, 4, z0 - 0.5));
+
+      totalOcc += cat.occupied;
+      totalHeld += cat.held;
+      totalAll += cat.total;
+      z0 += size.depth + BLOCK_GAP;
+    });
+  });
+
+  // Allée centrale, route d'accès et ligne médiane
+  world.add(place(new THREE.Mesh(box(CORRIDOR, 0.03, D + 16), M.asphalt), 0, 0.01, (D + 16) / 2 - 1));
+  world.add(place(new THREE.Mesh(box(totalW + 14, 0.03, 8), M.asphalt), 0, 0.01, D + 5));
+  for (let z = 0; z < D + 12; z += 3) {
+    world.add(place(new THREE.Mesh(box(0.25, 0.05, 1.5), M.line), 0, 0.05, z));
+  }
+
+  // Entrée (voie gauche) et sortie (voie droite), séparées par une cabine
+  const gateZ = D + 11;
+  world.add(place(new THREE.Mesh(box(1.8, 2.6, 2.4), M.booth), 0, 1.3, gateZ));
+  addGate(0, gateZ, +1, 'ENTRÉE', 'rgba(35,134,54,0.95)');   // on entre à droite
+  addGate(0, gateZ, -1, 'SORTIE', 'rgba(190,60,60,0.95)');
+
+  world.position.z = -(D + 14) / 2;
+
+  document.getElementById('n-occ').textContent = `Occupées : ${totalOcc}`;
+  document.getElementById('n-held').textContent = `En attente : ${totalHeld}`;
+  document.getElementById('n-free').textContent =
+    `Libres : ${Math.max(0, totalAll - totalOcc - totalHeld)}`;
+  return { total: totalAll, size: Math.max(totalW, D) };
+}
+
+// ---------- Rafraîchissement ----------
+let lastJson = '';
+let firstBuild = true;
+
+async function refresh() {
+  const statusEl = document.getElementById('status');
+  const key = getKey();
+  if (!key) { statusEl.textContent = 'Clé API requise (recharge la page).'; return; }
+  try {
+    const res = await fetch(API_URL, { headers: { 'X-API-Key': key } });
+    if (res.status === 401) {
+      sessionStorage.removeItem('parking_api_key');
+      statusEl.textContent = 'Clé API invalide. Recharge la page.';
+      return;
+    }
+    if (!res.ok) { statusEl.textContent = `Erreur ${res.status}`; return; }
+    const data = await res.json();
+    const json = JSON.stringify(data);
+    if (json !== lastJson) {
+      lastJson = json;
+      const out = build(extractList(data));
+      if (out.total === 0) {
+        statusEl.textContent = 'Format de réponse inattendu (voir la console).';
+        console.log('Réponse /parking/occupation :', data);
+        return;
+      }
+      if (firstBuild) {
+        const s = out.size + 30;
+        camera.position.set(0, s * 0.8, s * 0.95);
+        controls.target.set(0, 0, 0);
+        firstBuild = false;
+      }
+    }
+    statusEl.textContent = 'Mis à jour à ' + new Date().toLocaleTimeString('fr-FR');
+  } catch (e) {
+    statusEl.textContent = 'Serveur injoignable';
+    console.error(e);
+  }
+}
+
+refresh();
+setInterval(refresh, REFRESH_MS);
+
+renderer.setAnimationLoop(() => {
+  controls.update();
+  renderer.render(scene, camera);
+});
+</script>
+</body>
+</html>

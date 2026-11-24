@@ -51,6 +51,11 @@ async def dashboard():
     return FileResponse("infrastructure/api/static/dashboard.html")
 
 
+@app.get("/dashboard3d", tags=["UI"])
+async def dashboard3d():
+    return FileResponse("infrastructure/api/static/dashboard3d.html")
+
+
 @app.on_event("startup")
 async def startup():
     logger.info("Démarrage du micro-service Parking (version %s)", VERSION)
