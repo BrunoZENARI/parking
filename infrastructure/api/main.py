@@ -79,7 +79,7 @@ async def prometheus_metrics():
     for c in categories:
         metrics.update_stock_gauges(c)
     metrics.VEHICLES_PARKED.set(sum(c.spot_taken_walkin + c.spot_taken_booking for c in categories))
-    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+    return Response(generate_latest(metrics.REGISTRY), media_type=CONTENT_TYPE_LATEST)
 
 
 @app.on_event("startup")

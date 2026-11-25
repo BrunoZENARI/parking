@@ -135,3 +135,17 @@
 2026-11-25 14:31:57,804 INFO [parking] [cid=-] infrastructure.api.main: Démarrage du micro-service Parking (version 1.5.0)
 2026-11-25 14:31:57,808 INFO [parking] [cid=-] infrastructure.api.main: Catégories initialisées en base
 2026-11-25 14:31:57,941 INFO [parking] [cid=26b6cf48b99f4058a80ea2b7400da1d5] parking.http: GET /metrics -> 200 (13.8 ms)
+2026-11-25 14:55:39,127 INFO [parking] [cid=-] infrastructure.api.main: Arrêt du micro-service Parking
+2026-11-25 14:55:39,129 INFO [parking] [cid=-] tortoise: Tortoise-ORM shutdown
+2026-11-25 14:55:39,130 INFO [parking] [cid=-] tortoise: Tortoise-ORM shutdown
+2026-11-25 14:55:41,306 INFO [parking] [cid=-] tortoise: Tortoise-ORM started, {'default': <tortoise.backends.sqlite.client.SqliteClient object at 0x000002A53BBB1160>}, <tortoise.apps.Apps object at 0x000002A53BBB12B0>
+2026-11-25 14:55:41,307 INFO [parking] [cid=-] tortoise: Tortoise-ORM generating schema
+2026-11-25 14:55:41,314 INFO [parking] [cid=-] infrastructure.api.main: Démarrage du micro-service Parking (version 1.5.0)
+2026-11-25 14:55:41,319 INFO [parking] [cid=-] infrastructure.api.main: Catégories initialisées en base
+2026-11-25 14:56:19,745 INFO [parking] [cid=-] infrastructure.api.main: Arrêt du micro-service Parking
+2026-11-25 14:56:19,747 INFO [parking] [cid=-] tortoise: Tortoise-ORM shutdown
+2026-11-25 14:56:19,747 INFO [parking] [cid=-] tortoise: Tortoise-ORM shutdown
+2026-11-25 14:56:21,851 INFO [parking] [cid=-] tortoise: Tortoise-ORM started, {'default': <tortoise.backends.sqlite.client.SqliteClient object at 0x00000246E509D160>}, <tortoise.apps.Apps object at 0x00000246E509D2B0>
+2026-11-25 14:56:21,852 INFO [parking] [cid=-] tortoise: Tortoise-ORM generating schema
+2026-11-25 14:56:21,860 INFO [parking] [cid=-] infrastructure.api.main: Démarrage du micro-service Parking (version 1.5.0)
+2026-11-25 14:56:21,865 INFO [parking] [cid=-] infrastructure.api.main: Catégories initialisées en base
