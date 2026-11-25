@@ -24,7 +24,7 @@ def setup_logging() -> None:
     handler = logging.StreamHandler()
     handler.addFilter(CorrelationIdFilter())
     handler.setFormatter(
-        logging.Formatter("%(asctime)s %(levelname)s [%(correlation_id)s] %(name)s: %(message)s")
+        logging.Formatter("%(asctime)s %(levelname)s [parking] [cid=%(correlation_id)s] %(name)s: %(message)s")
     )
     root = logging.getLogger()
     root.handlers = [handler]
