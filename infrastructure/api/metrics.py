@@ -7,6 +7,11 @@ HTTP_REQUESTS = Counter(
 HTTP_DURATION = Histogram(
     "parking_http_request_duration_seconds", "Durée des requêtes HTTP", ["method", "path"]
 )
+OPERATIONS = Counter(
+    "parking_operations_total",
+    "Opérations métier du parking",
+    ["operation", "category", "commercial_type", "result"],
+)
 
 # --- Métriques métier (compteurs) ---
 _LABELS = ["category", "commercial_type"]

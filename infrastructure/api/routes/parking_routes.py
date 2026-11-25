@@ -210,6 +210,7 @@ async def create_hold(request: HoldRequest):
     if not success:
         logger.warning("hold refusé : plus de place (%s/%s)", name_upper, request.commercial_type.value)
         metrics.HOLDS_REFUSED.labels(name_upper, request.commercial_type.value).inc()
+        metrics.OPERATIONS.labels("hold", name_upper, request.commercial_type.value, "refused").inc()
         raise HTTPException(status_code=409, detail="Aucune place disponible")
 
     await category_repo.save(category)
@@ -226,6 +227,7 @@ async def create_hold(request: HoldRequest):
     saved_hold = await hold_repo.save(hold)
     logger.info("hold %s créé (%s/%s)", saved_hold.id, name_upper, request.commercial_type.value)
     metrics.HOLDS_CREATED.labels(name_upper, request.commercial_type.value).inc()
+    metrics.OPERATIONS.labels("hold", name_upper, request.commercial_type.value, "success").inc()
 
     return HoldResponse(
         hold_id=saved_hold.id,
@@ -265,6 +267,7 @@ async def confirm_entry(request: ConfirmEntryRequest):
     if not await category.confirm_entry(request.commercial_type):
         logger.warning("entrée refusée : capacité atteinte (%s/%s)", name, request.commercial_type.value)
         metrics.ENTRIES_REFUSED.labels(name, request.commercial_type.value).inc()
+        metrics.OPERATIONS.labels("confirm_entry", name, request.commercial_type.value, "refused").inc()
         raise HTTPException(status_code=409, detail="Capacité atteinte, entrée refusée")
 
     hold.confirm()
@@ -272,6 +275,7 @@ async def confirm_entry(request: ConfirmEntryRequest):
     await category_repo.save(category)
     logger.info("entrée confirmée (hold %s, %s/%s)", hold.id, name, request.commercial_type.value)
     metrics.ENTRIES_CONFIRMED.labels(name, request.commercial_type.value).inc()
+    metrics.OPERATIONS.labels("confirm_entry", name, request.commercial_type.value, "success").inc()
     return {"message": "Entrée confirmée"}
 
 
@@ -289,6 +293,7 @@ async def free_spot(request: EntryExitRequest):
     await category_repo.save(category)
     logger.info("place libérée (%s/%s)", request.category_name.upper(), request.commercial_type.value)
     metrics.EXITS.labels(request.category_name.upper(), request.commercial_type.value).inc()
+    metrics.OPERATIONS.labels("exit", request.category_name.upper(), request.commercial_type.value, "success").inc()
     return {"message": "Place libérée avec succès"}
 
 

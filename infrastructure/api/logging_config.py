@@ -1,3 +1,4 @@
+import os
 import logging
 import re
 import time
@@ -21,13 +22,18 @@ class CorrelationIdFilter(logging.Filter):
 
 
 def setup_logging() -> None:
-    handler = logging.StreamHandler()
-    handler.addFilter(CorrelationIdFilter())
-    handler.setFormatter(
-        logging.Formatter("%(asctime)s %(levelname)s [parking] [cid=%(correlation_id)s] %(name)s: %(message)s")
+    fmt = logging.Formatter(
+        "%(asctime)s %(levelname)s [parking] [cid=%(correlation_id)s] %(name)s: %(message)s"
     )
+    handlers = [logging.StreamHandler()]
+    log_file = os.getenv("LOG_FILE")
+    if log_file:
+        handlers.append(logging.FileHandler(log_file, encoding="utf-8"))
+    for h in handlers:
+        h.addFilter(CorrelationIdFilter())
+        h.setFormatter(fmt)
     root = logging.getLogger()
-    root.handlers = [handler]
+    root.handlers = handlers
     root.setLevel(logging.INFO)
 
 
