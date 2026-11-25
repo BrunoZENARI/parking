@@ -209,7 +209,6 @@ async def create_hold(request: HoldRequest):
     success = await category.take(request.commercial_type)
     if not success:
         logger.warning("hold refusé : plus de place (%s/%s)", name_upper, request.commercial_type.value)
-        metrics.HOLDS_CREATED.labels(name_upper, request.commercial_type.value).inc()
         metrics.HOLDS_REFUSED.labels(name_upper, request.commercial_type.value).inc()
         raise HTTPException(status_code=409, detail="Aucune place disponible")
 
@@ -226,6 +225,7 @@ async def create_hold(request: HoldRequest):
     )
     saved_hold = await hold_repo.save(hold)
     logger.info("hold %s créé (%s/%s)", saved_hold.id, name_upper, request.commercial_type.value)
+    metrics.HOLDS_CREATED.labels(name_upper, request.commercial_type.value).inc()
 
     return HoldResponse(
         hold_id=saved_hold.id,
@@ -257,8 +257,6 @@ async def confirm_entry(request: ConfirmEntryRequest):
 
     category_id = await category_repo.get_id_by_name(name)
     if hold.category_id != category_id or hold.commercial_type != request.commercial_type:
-        metrics.ENTRIES_CONFIRMED.labels(name, request.commercial_type.value).inc()
-        metrics.ENTRIES_REFUSED.labels(name, request.commercial_type.value).inc()
         raise HTTPException(status_code=409, detail="Le hold ne correspond pas à la catégorie ou au type demandés")
 
     if hold.status != HoldStatus.ACTIVE:
@@ -266,12 +264,14 @@ async def confirm_entry(request: ConfirmEntryRequest):
 
     if not await category.confirm_entry(request.commercial_type):
         logger.warning("entrée refusée : capacité atteinte (%s/%s)", name, request.commercial_type.value)
+        metrics.ENTRIES_REFUSED.labels(name, request.commercial_type.value).inc()
         raise HTTPException(status_code=409, detail="Capacité atteinte, entrée refusée")
 
     hold.confirm()
     await hold_repo.save(hold)
     await category_repo.save(category)
     logger.info("entrée confirmée (hold %s, %s/%s)", hold.id, name, request.commercial_type.value)
+    metrics.ENTRIES_CONFIRMED.labels(name, request.commercial_type.value).inc()
     return {"message": "Entrée confirmée"}
 
 
@@ -283,7 +283,6 @@ async def confirm_entry(request: ConfirmEntryRequest):
 async def free_spot(request: EntryExitRequest):
     category = await category_repo.get_by_name(request.category_name.upper())
     if not category:
-        metrics.ENTRIES_REFUSED.labels(name, request.commercial_type.value).inc()
         raise HTTPException(status_code=404, detail=f"Catégorie {request.category_name} introuvable")
 
     await category.free(request.commercial_type)
