@@ -26,6 +26,8 @@ EXITS = Counter("parking_exits_total", "Sorties (places libérées)", _LABELS)
 SPOTS_TAKEN = Gauge("parking_spots_taken", "Places occupées", _LABELS)
 SPOTS_HELD = Gauge("parking_spots_held", "Places en attente (holds actifs)", _LABELS)
 SPOTS_AVAILABLE = Gauge("parking_spots_available", "Places disponibles", _LABELS)
+VEHICLES_PARKED = Gauge("parking_vehicles_parked", "Total des véhicules actuellement garés")
+OCCUPATION_RATE = Gauge("parking_occupation_rate", "Taux d'occupation (0 à 1)", ["category"])
 
 
 def update_stock_gauges(c) -> None:

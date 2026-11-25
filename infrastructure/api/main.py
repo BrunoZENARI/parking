@@ -75,8 +75,10 @@ async def metrics_middleware(request: Request, call_next):
 
 @app.get("/metrics", tags=["Observabilité"], include_in_schema=False)
 async def prometheus_metrics():
-    for c in await category_repo.get_all():
+    categories = await category_repo.get_all()
+    for c in categories:
         metrics.update_stock_gauges(c)
+    metrics.VEHICLES_PARKED.set(sum(c.spot_taken_walkin + c.spot_taken_booking for c in categories))
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
