@@ -2,7 +2,7 @@ from prometheus_client import Counter, Gauge, Histogram
 
 # --- Métriques techniques ---
 HTTP_REQUESTS = Counter(
-    "parking_http_requests_total", "Requêtes HTTP reçues", ["method", "path", "status"]
+        "http_requests_total", "Requêtes HTTP reçues", ["method", "path", "status"]
 )
 HTTP_DURATION = Histogram(
     "parking_http_request_duration_seconds", "Durée des requêtes HTTP", ["method", "path"]
